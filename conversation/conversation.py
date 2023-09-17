@@ -36,6 +36,16 @@ class Conversation:
     conv_id: Any = None
 
     def get_prompt(self):
+        """
+        Generate a conversation prompt from the system message and role-based messages.
+
+        This function constructs a conversation prompt by combining the system message with
+        messages from different roles, applying separators based on the specified style.
+
+        Returns:
+        - ret: str
+            - The generated conversation prompt.
+        """
         if self.sep_style == SeparatorStyle.SINGLE:
             ret = self.system
             for role, message in self.messages:
@@ -57,9 +67,31 @@ class Conversation:
             raise ValueError(f"Invalid style: {self.sep_style}")
 
     def append_message(self, role, message):
+        """
+        Append a new message to the conversation.
+
+        This function adds a new message to the conversation, specifying the role of the sender
+        and the content of the message.
+
+        Parameters:
+        - role: str
+            - The role of the message sender.
+        - message: str
+            - The content of the message to be added.
+        """
         self.messages.append([role, message])
 
     def to_gradio_chatbot(self):
+        """
+        Convert the conversation to a Gradio Chatbot-compatible format.
+
+        This function converts the conversation into a list of message pairs suitable for use
+        with Gradio Chatbot components.
+
+        Returns:
+        - ret: List[List[str, str]]
+            - A list of message pairs, each containing two messages.
+        """
         ret = []
         for i, (role, msg) in enumerate(self.messages[self.offset:]):
             if i % 2 == 0:
@@ -69,6 +101,15 @@ class Conversation:
         return ret
 
     def copy(self):
+        """
+        Create a copy of the current conversation.
+
+        This function creates a deep copy of the current conversation, including all its attributes.
+
+        Returns:
+        - ret: Conversation
+            - A copy of the current conversation object.
+        """
         return Conversation(
             system=self.system,
             # system_img=self.system_img,
@@ -81,6 +122,17 @@ class Conversation:
             conv_id=self.conv_id)
 
     def dict(self):
+        """
+        Convert the conversation to a dictionary.
+
+        This function converts the conversation object into a dictionary for serialization or
+        other purposes.
+
+        Returns:
+        - ret: dict
+            - A dictionary representation of the conversation.
+        """
+
         return {
             "system": self.system,
             # "system_img": self.system_img,
@@ -94,7 +146,6 @@ class Conversation:
 
 
 class StoppingCriteriaSub(StoppingCriteria):
-
     def __init__(self, stops=[], encounters=1):
         super().__init__()
         self.stops = stops
@@ -106,7 +157,6 @@ class StoppingCriteriaSub(StoppingCriteria):
 
         return False
 
-
 CONV_VISION = Conversation(
     system="",
     roles=("Instruction", "Responese"),
@@ -116,15 +166,67 @@ CONV_VISION = Conversation(
     sep="\n",
 )
 
-
-
 class Chat:
+    """
+    A class for managing conversations and generating responses using a language model.
+
+    This class encapsulates the functionality for conducting text-based conversations and
+    generating responses using a language model. It provides methods for managing conversations
+    and interacting with the model.
+
+    Parameters:
+        - model: Language model
+            - The language model used for generating responses.
+
+        - vis_processor: Image processing function
+            - The function used to preprocess images before passing them to the model.
+
+        - device: str (default: 'cuda:0')
+            - The device on which the model and image processing are performed.
+
+    Attributes:
+        - device: str
+            - The device on which the model and image processing are performed.
+
+        - lavin: Language model
+            - The language model used for generating responses.
+
+        - vis_processor: Image processing function
+            - The function used to preprocess images before passing them to the model.
+
+    Methods:
+        - answer
+            - Generate a response based on the conversation context and potentially included images.
+
+        - ask
+            - Append a user's text message to the conversation.
+
+        - upload_img
+            - Upload an image for processing and add it to the conversation.
+
+        - get_context_emb
+            - Retrieve context information and image embedding for a conversation.
+    """
     def __init__(self, model, vis_processor, device='cuda:0'):
         self.device = device
         self.lavin = model
         self.vis_processor = vis_processor
 
     def ask(self, text, conv):
+        """
+        Append a user's text message to the conversation.
+
+        This function adds a text message from the user to the conversation object.
+        If the last message in the conversation is an image, it appends the text to that image message.
+        Otherwise, it creates a new text message from the user.
+
+        Parameters:
+            - text: str
+                - The text message to be added to the conversation.
+
+            - conv: Conversation object
+                - The conversation to which the text message will be appended.
+        """
         if len(conv.messages) > 0 and conv.messages[-1][0] == conv.roles[0] \
                 and conv.messages[-1][1][-6:] == '</Img>':  # last message is image.
             conv.messages[-1][1] = ' '.join([conv.messages[-1][1], text])
@@ -133,6 +235,50 @@ class Chat:
 
     def answer(self, conv, img_list, max_new_tokens=300, num_beams=1, min_length=1, top_p=0.9,
                repetition_penalty=1.0, length_penalty=1, temperature=1.0, max_length=2000,n_feats=6):
+        """
+        Generate a response based on the conversation context and potentially included images.
+
+        This function generates a response given a conversation, which may include a context message
+        and optionally one or more images. The response is generated using a language model.
+
+        Parameters:
+            - conv: Conversation object
+                - The conversation for which a response will be generated.
+
+            - img_list: list
+                - A list containing processed images to be considered during response generation.
+
+            - max_new_tokens: int (default: 300)
+                - The maximum number of tokens allowed in the generated response.
+
+            - num_beams: int (default: 1)
+                - The number of beams for beam search during generation.
+
+            - min_length: int (default: 1)
+                - The minimum length of the generated response.
+
+            - top_p: float (default: 0.9)
+                - Top-p (nucleus) probability for generating the response.
+
+            - repetition_penalty: float (default: 1.0)
+                - Repetition penalty applied during generation.
+
+            - length_penalty: float (default: 1)
+                - Length penalty applied during generation.
+
+            - temperature: float (default: 1.0)
+                - Temperature for controlling the randomness of generation.
+
+            - max_length: int (default: 2000)
+                - The maximum allowed length for the generated response.
+
+            - n_feats: int (default: 6)
+                - Number of additional features to consider during generation.
+
+        Returns:
+            - output_text: str
+                - The generated response text.
+        """
         conv.append_message(conv.roles[1], None)
         prompt, indicator,  img = self.get_context_emb(conv, img_list)
 
@@ -163,6 +309,29 @@ class Chat:
         return output_text
 
     def upload_img(self, image, conv, img_list):
+        """
+        Uploads an image for processing and adds it to the conversation.
+
+        This function accepts an image in various formats (file path, PIL Image, or PyTorch Tensor),
+        processes it for visualization, and adds it to a list of images within the conversation.
+
+        Parameters:
+            - image: str, PIL Image, or torch.Tensor
+                - If str: Path to the image file.
+                - If PIL Image: The image to be uploaded.
+                - If torch.Tensor: A tensor representing the image.
+                If the tensor has shape (H, W, C), it will be converted to (1, H, W, C).
+
+            - conv: Conversation object
+                - The conversation to which the image message will be added.
+
+            - img_list: list
+                - A list that stores the processed images.
+
+        Returns:
+            - msg: str
+                - A message indicating the successful upload of the image.
+        """
         if isinstance(image, str):  # is a image path
             raw_image = Image.open(image).convert('RGB')
             image = self.vis_processor(raw_image).unsqueeze(0).to(self.device)
@@ -174,14 +343,37 @@ class Chat:
                 image = image.unsqueeze(0)
             image = image.to(self.device)
 
-        # image_emb, _ = self.lavin.backbone.encode_img(image)
         img_list.append(image)
         conv.append_message(conv.roles[0], "<Img><ImageHere></Img>")
         msg = "Received."
-        # self.conv.append_message(self.conv.roles[1], msg)
         return msg
 
     def get_context_emb(self, conv, img_list):
+        """
+        This function extracts the conversation prompt, checks for the presence of an image indicator
+        ('<Img><ImageHere></Img>') in the prompt, and returns the following information:
+        - The modified prompt with the image indicator removed (if present).
+        - An indicator (1 if image indicator is found, 0 otherwise).
+        - The image tensor (if the indicator is 1), or a zero tensor if no image is present.
+
+        Parameters:
+            - conv: Conversation object
+                - The conversation from which context information is retrieved.
+
+            - img_list: list or None
+                - A list containing processed images or None if no images are available.
+
+        Returns:
+            - prompt: str
+                - The conversation prompt with the image indicator removed (if present).
+
+            - indicator: int
+                - An indicator (1 if image indicator is found, 0 otherwise).
+
+            - img_tensor: torch.Tensor
+                - The image tensor if an image is present (shape: [1, 3, 224, 224]),
+                or a zero tensor if no image is present.
+        """
         prompt = conv.get_prompt()
 
         if '<Img><ImageHere></Img>' in prompt:
@@ -192,3 +384,4 @@ class Chat:
         assert img_list is None or len(img_list) <=  1
 
         return prompt, indicator,  img_list[0] if indicator==1 else torch.Tensor(torch.zeros(1,3, 224, 224).float())
+    
