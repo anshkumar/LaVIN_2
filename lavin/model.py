@@ -39,7 +39,6 @@ class ModelArgs:
     max_seq_len: int = 2048
     drop_path: float=0.
 
-
 class RMSNorm(torch.nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
@@ -250,7 +249,6 @@ class AdapterMLP(nn.Module):
         with autocast():
             x=self.conv_B(F.silu(self.conv_A(x)))
         return x
-
 
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs):
