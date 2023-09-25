@@ -203,7 +203,7 @@ def set_MMAdapter(model, method, dim=8, s=1, set_forward=True,t=10,gradient_chec
             set_MMAdapter(_, method, dim, s, set_forward=set_forward,t=t,gradient_checkpointing=gradient_checkpointing)
 
 
-from clip.model import ResidualAttentionBlock
+from open_alip.model import ResidualAttentionBlock
 def set_Clip_Adapter(model, method, dim=8, s=1, set_forward=True, t=10.):
     for _ in model.children():
         if type(_) == ResidualAttentionBlock:
