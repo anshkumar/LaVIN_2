@@ -8,7 +8,8 @@ import math
 import torch
 from torch import nn
 import torch.nn.functional as F
-import clip
+# import clip
+from open_alip import create_model
 import fairscale.nn.model_parallel.initialize as fs_init
 from fairscale.nn.model_parallel.layers import (
     ParallelEmbedding,
@@ -215,6 +216,17 @@ class TransformerBlock(nn.Module):
         out = h + self.feed_forward.forward(self.ffn_norm(h))
         return out
 
+def get_state_dict(model_weight):
+    state_dict = torch.load(model_weight)
+    state_dict_removed = {}
+    for k, value in state_dict.items():
+        if "module." in k:
+            k_removed = k.split("module.")[-1]
+            state_dict_removed[k_removed] = value
+        else:
+            state_dict_removed[k] = value
+    return state_dict_removed
+
 from  torch.cuda.amp import autocast
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs):
@@ -240,7 +252,11 @@ class Transformer(nn.Module):
             self.params.dim // self.params.n_heads, self.params.max_seq_len * 2
         )
 
-        self.backbone = clip.load('ViT-L/14')[0]
+        self.backbone = create_model("ViT-B/32")
+        state_dict = get_state_dict("/home/sort/ved/LaVIN_2/ALIP_YFCC15M_B32.pt")
+        self.backbone.load_state_dict(state_dict, strict=True)
+        self.backbone.eval()
+        self.backbone.cuda()   
 
         self.adapter_proj = AdapterMLP(1024, params.hidden_proj, params.dim).float()
         self.adapter_modality_embedding=nn.Embedding(2,params.dim).float()
