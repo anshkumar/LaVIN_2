@@ -176,13 +176,14 @@ def forward_llama_attn_cache(self, x: torch.Tensor, start_pos: int, freqs_cis: t
     out = h + self.drop_path(self.feed_forward.forward(self.ffn_norm(h)))
     return out
 
-def forward_clip(self, x: torch.Tensor):
-    x = x + self.attention(self.adapter_attn(self.ln_1(x)))
+def forward_clip(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+    x = x + self.ln_attn(self.attention(self.adapter_attn(self.ln_1(x)), attn_mask=attn_mask))
     x = x + self.mlp(self.ln_2(x))
+
     return x
 
-def forward_clip_full(self, x: torch.Tensor):
-    x = x + self.attention(self.adapter_attn(self.ln_1(x)))
+def forward_clip_full(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
+    x = x + self.ln_attn(self.attention(self.adapter_attn(self.ln_1(x)), attn_mask=attn_mask))
     x = x + self.mlp(self.adapter_mlp(self.ln_2(x)))
     return x
 
