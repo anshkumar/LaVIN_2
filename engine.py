@@ -44,7 +44,7 @@ def train_one_epoch(model: torch.nn.Module,
         c_loss_value = c_loss.item()
 
         if torch.isnan(loss):
-            print("NaN loss encountered. Skipping this batch.")
+            # print("NaN loss encountered. Skipping this batch.")
             continue
 
         loss = loss/accum_iter
