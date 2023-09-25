@@ -20,7 +20,8 @@ from torch.nn import Embedding, Linear
 import torch
 import pdb
 from timm.models.layers import  DropPath
-import clip
+# import clip
+from open_alip import create_model
 from  torch.cuda.amp import autocast
 
 @dataclass
@@ -54,6 +55,26 @@ class RMSNorm(torch.nn.Module):
 
 
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
+    """
+    This function precomputes the frequency and returns it in complex form.
+    Eq 34 in https://arxiv.org/abs/2104.09864 
+
+    Parameters:
+    dim (int): The dimension of the frequency, typically the dimension divided by the number of heads in a transformer model.
+    end (int): The maximum sequence length multiplied by 2.
+    theta (float, optional): A pre-defined parameter used in the frequency computation. Default is 10000.0.
+
+    Returns:
+    torch.Tensor: A tensor of complex numbers representing the precomputed frequencies.
+
+    Note:
+    The function freqs by θ_i = 10000^{-2(i-1)/d}, i ∈ [1, 2, ..., d/2], which can be re-written as:
+    1/10000^{2(i-1)/d}. The equivalent code for 2(i-1)/d, i ∈ [1, 2, ..., d/2] is np.arange(0, d, 2)[: (d // 2)]. 
+    This code generates a sequence of numbers starting from 0 and incrementing by 2 up to d, excluding d, and then selects 
+    the first d // 2 elements from the sequence. Now, for various positions m, let's have m = torch.arange(seq_len, device=freqs.device).
+    Getting each combination of m and θ, we will  use outer product and finally convert to polar form to get sin and cos terms.
+    """
+    
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
     t = torch.arange(end, device=freqs.device)  # type: ignore
     freqs = torch.outer(t, freqs).float()  # type: ignore
@@ -62,6 +83,9 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
 
 
 def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
+    '''
+    Convert freqs_cis sahpe from (seq length, head dim) to (1, seq length, 1, head dim)
+    '''
     ndim = x.ndim
     assert 0 <= 1 < ndim
     assert freqs_cis.shape == (x.shape[1], x.shape[-1])
@@ -74,6 +98,14 @@ def apply_rotary_emb(
     xk: torch.Tensor,
     freqs_cis: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    '''
+    Eq 34 in https://arxiv.org/abs/2104.09864 
+    Convert xq and xk into complex no as follows:
+        xq, xk have shape of (batch size, seq length, local heads, head dim).
+        Now reshape the last dim (head_dim) into (-1, 2). One for real part and another for complex part 
+        of the complex no. So, now the new shape is (batch size, seq length, local heads, head_dim/2, 2).
+    '''
+    
     xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
     xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
     freqs_cis = reshape_for_broadcast(freqs_cis, xq_)
@@ -250,6 +282,17 @@ class AdapterMLP(nn.Module):
             x=self.conv_B(F.silu(self.conv_A(x)))
         return x
 
+def get_state_dict(model_weight):
+    state_dict = torch.load(model_weight)
+    state_dict_removed = {}
+    for k, value in state_dict.items():
+        if "module." in k:
+            k_removed = k.split("module.")[-1]
+            state_dict_removed[k_removed] = value
+        else:
+            state_dict_removed[k] = value
+    return state_dict_removed
+
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs):
         super().__init__()
@@ -277,8 +320,13 @@ class Transformer(nn.Module):
         )
 
         ########################################################
-        self.backbone = clip.load('ViT-L/14')[0]        
-        self.adapter_proj = AdapterMLP(1024, params.hidden_proj, params.dim).float()
+        # self.backbone = clip.load('ViT-L/14')[0] 
+        self.backbone = create_model("ViT-B/32")
+        state_dict = get_state_dict("/home/sort/ved/LaVIN_2/ALIP_YFCC15M_B32.pt")
+        self.backbone.load_state_dict(state_dict, strict=True)
+        self.backbone.eval()
+        self.backbone.cuda()       
+        self.adapter_proj = AdapterMLP(512, params.hidden_proj, params.dim).float() # (512, 128, 4096)
         self.adapter_modality_embedding=nn.Embedding(2, params.dim).float()
 
     def insert_image_embeds(self, examples, labels, image_embeds, prefix_img, prefix_nonimg, img_indicators):
@@ -321,7 +369,8 @@ class Transformer(nn.Module):
         return new_examples,new_labels
 
     def forward(self, examples, labels,images=None, prefix_img=None, prefix_nonimg=None,img_indicators=None):
-        image_embeds = self.backbone.encode_image(images).half() # [1, 6, 1024]
+        image_embeds = self.backbone.encode_image(images.half()).half() # [1, 512]
+        image_embeds = image_embeds.unsqueeze(1)
 
         if isinstance(img_indicators,list):
             img_indicators = torch.Tensor(img_indicators).to(image_embeds.device).long() # [1]
