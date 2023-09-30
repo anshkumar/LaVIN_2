@@ -232,7 +232,7 @@ def print_scores(scores):
 
 def load(
     ckpt_dir: str,
-llm_model:str,
+    llm_model:str,
     tokenizer_path: str,
     adapter_path: str,
     local_rank: int,

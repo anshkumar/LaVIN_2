@@ -258,7 +258,7 @@ class Transformer(nn.Module):
         self.backbone.eval()
         self.backbone.cuda()   
 
-        self.adapter_proj = AdapterMLP(1024, params.hidden_proj, params.dim).float()
+        self.adapter_proj = AdapterMLP(512, params.hidden_proj, params.dim).float()
         self.adapter_modality_embedding=nn.Embedding(2,params.dim).float()
 
     @torch.inference_mode()

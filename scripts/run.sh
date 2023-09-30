@@ -2,11 +2,11 @@ CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node 1 --nnodes 1 --node_rank 0 --ma
     --llm_model 7B\
     --llama_model_path ../data/weights/ \
     --max_seq_len 512 \
-    --batch_size 1 \
+    --batch_size 4 \
     --accum_iter 32 \
     --epochs 20 \
     --warmup_epochs 2 \
-    --blr 9e-3 \
+    --blr 0.009 \
     --weight_decay 0.02 \
     --output_dir ./LaVIN-7B/\
     --adapter_type attn\
@@ -15,8 +15,8 @@ CUDA_VISIBLE_DEVICES=0 torchrun --nproc_per_node 1 --nnodes 1 --node_rank 0 --ma
     --n_prompt 6 \
     --prompt_format QCM-ALE \
     --temperature 10.\
-    --visual_adapter_type router
-    --gradient_checkpointing
-    --bits 4bit
+    --visual_adapter_type router \
+    --gradient_checkpointing \
+    --bits 4bit \
     --cpu_load
 

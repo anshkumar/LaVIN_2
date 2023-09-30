@@ -51,14 +51,15 @@ class LaVIN_Generator:
         images=images.cuda()
         self.model.backbone.cuda()
 
-        image_embeds= self.model.backbone.encode_image(images)
+        image_embeds= self.model.backbone.encode_image(images.half()).half()
+        image_embeds = image_embeds.unsqueeze(1)
         image_embeds=self.model.adapter_proj(image_embeds)
 
 
         prompt_tokens=[]
         for i,x in enumerate(prompts):
             if indicators[i]==1:
-                token_idx=prefix_img_token+[0]*n_feats+self.tokenizer.encode(x, bos=False, eos=False)
+                token_idx=prefix_img_token+[0]*image_embeds[i].shape[0]+self.tokenizer.encode(x, bos=False, eos=False)
             else:
                 token_idx = non_prefix_img_token + self.tokenizer.encode(x, bos=False, eos=False)
             prompt_tokens.append(token_idx)
@@ -85,10 +86,8 @@ class LaVIN_Generator:
             if indicators[i]==1:
                 pos=len(prefix_img_token)
                 #insert image emebedding into the sequence
-                image_token_embed=torch.cat([token_embeds[i,:pos],image_embeds[i],token_embeds[i,pos+n_feats:]],0)
+                image_token_embed=torch.cat([token_embeds[i,:pos],image_embeds[i],token_embeds[i,pos+image_embeds[i].shape[0]:]],0)
                 token_embeds[i]=image_token_embed
-
-
 
         start_pos = min_prompt_size
         prev_pos = 0
