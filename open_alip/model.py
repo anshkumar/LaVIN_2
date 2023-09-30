@@ -386,16 +386,23 @@ class VisualTransformer(nn.Module):
         x = self.ln_pre(x)
 
         x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x)
-        x = x.permute(1, 0, 2)  # LND -> NLD
+        
+        ret_feats=[]
+        for i, layer in enumerate(self.transformer.resblocks):
+            x=layer(x)
+            if (i+1)%4==0:
+                ret_feats.append(x.permute(1, 0, 2)[:,:1])
+                
+        # x = self.transformer(x)
+        # x = x.permute(1, 0, 2)  # LND -> NLD
 
-        x = self.ln_post(x[:, 0, :])
+        # x = self.ln_post(x[:, 0, :])
 
-        if self.proj is not None:
-            x = x @ self.proj
+        # if self.proj is not None:
+        #     x = x @ self.proj
 
-        return x
-
+        # return x
+        return torch.cat(ret_feats,1)
 
 @dataclass
 class ALIPVisionCfg:
