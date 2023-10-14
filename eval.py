@@ -357,7 +357,7 @@ def main(
     print('total_items: ',total_items)
 
 
-    image_transforms=transforms.Compose([transforms.Resize((224, 224), interpolation=Image.BICUBIC),transforms.ToTensor(), transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)])
+    image_transforms=transforms.Compose([transforms.Resize((336, 336), interpolation=Image.BICUBIC),transforms.ToTensor(), transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)])
 
     prompt_args=PromptArgs()
     prompt_args.prompt_format = prompt_format
@@ -385,7 +385,7 @@ def main(
                 image = image_transforms(image)
                 indicator = 1
             else:
-                image = torch.Tensor(torch.zeros(3, 224, 224).float())
+                image = torch.Tensor(torch.zeros(3, 336, 336).float())
                 indicator = 0
             prompts.append(prompt)
             answers.append(answer)

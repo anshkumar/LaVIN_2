@@ -1,0 +1,12 @@
+torch
+fairscale
+fire
+sentencepiece
+transformers
+timm
+tensorboard
+ftfy
+gradio
+bitsandbytes
+fvcore
+omegaconf

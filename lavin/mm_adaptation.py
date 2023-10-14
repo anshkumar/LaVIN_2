@@ -71,8 +71,8 @@ def LaVIN(args):
 
     llama_model_path =args.llama_model_path
     model_name = args.llm_model
-
     checkpoint, tokenizer, params = _load_and_redistribute_checkpoint(llama_model_path, model_name)
+    print('_load_and_redistribute_checkpoint')
 
     model_args: ModelArgs = ModelArgs(
         max_seq_len=args.max_seq_len, max_batch_size=32, **params
@@ -87,7 +87,7 @@ def LaVIN(args):
         torch.set_default_tensor_type(torch.cuda.HalfTensor)
 
     llama = Transformer(model_args)
-
+    print('Transformer')
     #delete language encoder
     del llama.backbone.transformer
 
@@ -96,16 +96,16 @@ def LaVIN(args):
     if args.bits in ['4bit','8bit']:
         from util.quantization import quant_model_bnb
         llama.layers=quant_model_bnb(llama.layers,quant_bit=args.bits)
-
+    print('quantization')
     llama.load_state_dict(checkpoint, strict=False)
-
+    print('load_state_dict')
     if args.use_vicuna:
         apply_model_delta_online(llama,'../data/weights/vicuna_'+args.llm_model)
 
     if args.adapter_type=='block' or  args.adapter_type=='attn':
         set_MMAdapter(llama,args.adapter_type,dim=args.adapter_dim,s=args.adapter_scale,t=args.temperature,gradient_checkpointing=args.gradient_checkpointing)
         set_Clip_Adapter(llama.backbone.visual,args.visual_adapter_type,dim=args.adapter_dim,s=args.adapter_scale,t=args.temperature)
-
+    print('Adapter')
     learnable_keys=['adapter']
     total=0.
     trainable_names=[]

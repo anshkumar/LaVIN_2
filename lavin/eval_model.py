@@ -8,7 +8,8 @@ import math
 import torch
 from torch import nn
 import torch.nn.functional as F
-# import clip
+import clip
+from diht import model_zoo
 from open_alip import create_model
 import fairscale.nn.model_parallel.initialize as fs_init
 from fairscale.nn.model_parallel.layers import (
@@ -20,17 +21,19 @@ from lavin.model import AdapterMLP
 
 @dataclass
 class ModelArgs:
-    dim: int = 512
-    n_layers: int = 8
-    n_heads: int = 8
+    dim: int = 4096
+    n_layers: int = 32
+    n_heads: int = 32
+    n_kv_heads: Optional[int] = None
     vocab_size: int = -1  # defined later by tokenizer
     multiple_of: int = 256  # make SwiGLU hidden layer size multiple of large power of 2
+    ffn_dim_multiplier: Optional[float] = None
     norm_eps: float = 1e-5
     hidden_proj: int=128
 
     max_batch_size: int = 32
     max_seq_len: int = 2048
-
+    drop_path: float=0.
 
 
 class RMSNorm(torch.nn.Module):
@@ -75,12 +78,26 @@ def apply_rotary_emb(
     xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
+def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """torch.repeat_interleave(x, dim=2, repeats=n_rep)"""
+    bs, slen, n_kv_heads, head_dim = x.shape
+    if n_rep == 1:
+        return x
+    return (
+        x[:, :, :, None, :]
+        .expand(bs, slen, n_kv_heads, n_rep, head_dim)
+        .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
+    )
 
 class Attention(nn.Module):
     def __init__(self, args: ModelArgs):
         super().__init__()
 
-        self.n_local_heads = args.n_heads // fs_init.get_model_parallel_world_size()
+        self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
+        model_parallel_size = fs_init.get_model_parallel_world_size()
+        self.n_local_heads = args.n_heads // model_parallel_size
+        self.n_local_kv_heads = self.n_kv_heads // model_parallel_size
+        self.n_rep = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = args.dim // args.n_heads
 
         self.wq = ColumnParallelLinear(
@@ -92,14 +109,14 @@ class Attention(nn.Module):
         )
         self.wk = ColumnParallelLinear(
             args.dim,
-            args.n_heads * self.head_dim,
+            self.n_kv_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
         )
         self.wv = ColumnParallelLinear(
             args.dim,
-            args.n_heads * self.head_dim,
+            self.n_kv_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
@@ -113,20 +130,31 @@ class Attention(nn.Module):
         )
 
         self.cache_k = torch.zeros(
-            (args.max_batch_size, args.max_seq_len, self.n_local_heads, self.head_dim)
+            (
+                args.max_batch_size,
+                args.max_seq_len,
+                self.n_local_kv_heads,
+                self.head_dim,
+            )
         ).cuda()
         self.cache_v = torch.zeros(
-            (args.max_batch_size, args.max_seq_len, self.n_local_heads, self.head_dim)
+            (
+                args.max_batch_size,
+                args.max_seq_len,
+                self.n_local_kv_heads,
+                self.head_dim,
+            )
         ).cuda()
         self.gate = torch.nn.Parameter(torch.zeros(1, self.n_local_heads, 1, 1))
+
 
     def forward(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor], adapter=None):
         bsz, seqlen, _ = x.shape
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
 
         xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
-        xk = xk.view(bsz, seqlen, self.n_local_heads, self.head_dim)
-        xv = xv.view(bsz, seqlen, self.n_local_heads, self.head_dim)
+        xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
+        xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
 
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
 
@@ -170,9 +198,13 @@ class FeedForward(nn.Module):
         dim: int,
         hidden_dim: int,
         multiple_of: int,
+        ffn_dim_multiplier: Optional[float],
     ):
         super().__init__()
         hidden_dim = int(2 * hidden_dim / 3)
+        # custom dim factor multiplier
+        if ffn_dim_multiplier is not None:
+            hidden_dim = int(ffn_dim_multiplier * hidden_dim)
         hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
 
         self.w1 = ColumnParallelLinear(
@@ -197,7 +229,7 @@ class TransformerBlock(nn.Module):
         self.head_dim = args.dim // args.n_heads
         self.attention = Attention(args)
         self.feed_forward = FeedForward(
-            dim=args.dim, hidden_dim=4 * args.dim, multiple_of=args.multiple_of
+            dim=args.dim, hidden_dim=4 * args.dim, multiple_of=args.multiple_of, ffn_dim_multiplier=args.ffn_dim_multiplier
         )
         self.layer_id = layer_id
         self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
@@ -252,13 +284,16 @@ class Transformer(nn.Module):
             self.params.dim // self.params.n_heads, self.params.max_seq_len * 2
         )
 
-        self.backbone = create_model("ViT-B/32")
-        state_dict = get_state_dict("/home/sort/ved/LaVIN_2/ALIP_YFCC15M_B32.pt")
-        self.backbone.load_state_dict(state_dict, strict=True)
-        self.backbone.eval()
-        self.backbone.cuda()   
+        # self.backbone = create_model("ViT-B/32")
+        # state_dict = get_state_dict("/home/sort/ved/LaVIN_2/ALIP_YFCC15M_B32.pt")
+        # self.backbone.load_state_dict(state_dict, strict=True)
+        # self.backbone.eval()
+        # self.backbone.cuda() 
+        # self.backbone = clip.load('ViT-L/14')[0]  
+        _, _, self.backbone = model_zoo.load_model("diht_vitl14_336px", is_train=False)
+        self.backbone = self.backbone.to(torch.device("cuda"))
 
-        self.adapter_proj = AdapterMLP(512, params.hidden_proj, params.dim).float()
+        self.adapter_proj = AdapterMLP(1024, params.hidden_proj, params.dim).float()
         self.adapter_modality_embedding=nn.Embedding(2,params.dim).float()
 
     @torch.inference_mode()

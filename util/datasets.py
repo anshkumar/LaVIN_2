@@ -2,12 +2,15 @@ import  json, re,random
 import torch.utils.data as Data
 from torchvision.transforms import transforms
 import os
-from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
+# from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from PIL import Image
 from util.base_prompt import *
 import torch
 from lavin import Tokenizer
 import copy
+
+IMAGENET_DEFAULT_MEAN = (0.48145466, 0.4578275, 0.40821073)
+IMAGENET_DEFAULT_STD = (0.26862954, 0.26130258, 0.27577711)
 
 class ScienceQADataSet(Data.Dataset):
     r"""A custom dataset class for ScienceQA data.
@@ -45,7 +48,7 @@ class ScienceQADataSet(Data.Dataset):
 
         print(f"number of problems in split {split}: {len(self.qids)}\n")
 
-        self.transforms=transforms.Compose([transforms.Resize((224, 224), interpolation=Image.BICUBIC),transforms.ToTensor(), transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)])
+        self.transforms=transforms.Compose([transforms.Resize((336, 336), interpolation=Image.BICUBIC),transforms.ToTensor(), transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)])
 
     def tokenize(self,prompt,answer):
         r"""Tokenizes a prompt and an answer, and prepares them for model input.
@@ -152,7 +155,7 @@ class ScienceQADataSet(Data.Dataset):
             image = self.transforms(image)
             indicator=1
         else:
-            image=torch.Tensor(torch.zeros(3,224,224).float())
+            image=torch.Tensor(torch.zeros(3,336,336).float())
             indicator=0
 
         example, labels, example_mask, _=self.tokenize(prompt_question,prompt_answer)

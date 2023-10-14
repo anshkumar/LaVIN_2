@@ -52,7 +52,7 @@ class LaVIN_Generator:
         self.model.backbone.cuda()
 
         image_embeds= self.model.backbone.encode_image(images.half()).half()
-        image_embeds = image_embeds.unsqueeze(1)
+        # image_embeds = image_embeds.unsqueeze(1)
         image_embeds=self.model.adapter_proj(image_embeds)
 
 

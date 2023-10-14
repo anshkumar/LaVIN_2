@@ -20,7 +20,8 @@ from torch.nn import Embedding, Linear
 import torch
 import pdb
 from timm.models.layers import  DropPath
-# import clip
+import clip
+from diht import model_zoo
 from open_alip import create_model
 from  torch.cuda.amp import autocast
 
@@ -282,17 +283,6 @@ class AdapterMLP(nn.Module):
             x=self.conv_B(F.silu(self.conv_A(x)))
         return x
 
-def get_state_dict(model_weight):
-    state_dict = torch.load(model_weight)
-    state_dict_removed = {}
-    for k, value in state_dict.items():
-        if "module." in k:
-            k_removed = k.split("module.")[-1]
-            state_dict_removed[k_removed] = value
-        else:
-            state_dict_removed[k] = value
-    return state_dict_removed
-
 class Transformer(nn.Module):
     def __init__(self, params: ModelArgs):
         super().__init__()
@@ -321,12 +311,9 @@ class Transformer(nn.Module):
 
         ########################################################
         # self.backbone = clip.load('ViT-L/14')[0] 
-        self.backbone = create_model("ViT-B/32")
-        state_dict = get_state_dict("/home/sort/ved/LaVIN_2/ALIP_YFCC15M_B32.pt")
-        self.backbone.load_state_dict(state_dict, strict=True)
-        self.backbone.eval()
-        self.backbone.cuda()       
-        self.adapter_proj = AdapterMLP(512, params.hidden_proj, params.dim).float() # (512, 128, 4096)
+        _, _, self.backbone = model_zoo.load_model("diht_vitl14_336px", is_train=False)
+        self.backbone = self.backbone.to(torch.device("cuda"))
+        self.adapter_proj = AdapterMLP(1024, params.hidden_proj, params.dim).float() # (512, 128, 4096)
         self.adapter_modality_embedding=nn.Embedding(2, params.dim).float()
 
     def insert_image_embeds(self, examples, labels, image_embeds, prefix_img, prefix_nonimg, img_indicators):
@@ -370,7 +357,7 @@ class Transformer(nn.Module):
 
     def forward(self, examples, labels,images=None, prefix_img=None, prefix_nonimg=None,img_indicators=None):
         image_embeds = self.backbone.encode_image(images.half()).half() # [1, 512]
-        image_embeds = image_embeds.unsqueeze(1)
+        # image_embeds = image_embeds.unsqueeze(1)
 
         if isinstance(img_indicators,list):
             img_indicators = torch.Tensor(img_indicators).to(image_embeds.device).long() # [1]

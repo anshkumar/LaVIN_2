@@ -58,9 +58,9 @@ class RepAdapter_Router(nn.Module):
             t=10.
     ):
         super().__init__()
-        self.conv_A = nn.Conv1d(in_features,hidden_dim,1,groups=1,bias=True)
-        self.conv_B = nn.Conv1d(hidden_dim, in_features, 1, groups=groups, bias=True)
-        self.conv_D = nn.Conv1d(hidden_dim, in_features, 1, groups=groups, bias=True)
+        self.conv_A = nn.Conv1d(in_features,hidden_dim,1,groups=1,bias=True) # Down-scale conv
+        self.conv_B = nn.Conv1d(hidden_dim, in_features, 1, groups=groups, bias=True) # Up-scale conv 1
+        self.conv_D = nn.Conv1d(hidden_dim, in_features, 1, groups=groups, bias=True) # Up-scale conv 2
         self.expert_weights = nn.Linear(in_features,2)
         self.dropout = nn.Dropout(0.1)
         self.groups = groups
@@ -94,71 +94,6 @@ class RepAdapter_Router(nn.Module):
             x = x.transpose(1,2).contiguous()
         return x
 
-class RepAdapter(nn.Module):
-    r"""Pytorch Implemention of RepAdapter for 1d tensor
-    copy from https://github.com/luogen1996/RepAdapter/blob/main/repadapter.py
-    
-    Visual adapter (here, fa1 and fa2) is often a lightweight neural network
-    with a bottleneck structure which can be formulated by
-            f(X; θ) = X + φ_u(φ_d(X))
-    Here, φ_d and φ_u denote the downsampling and upsampling projections, respectively.
-    
-    Args:
-        in_features (int): Number of input features in the tensor.
-        hidden_dim (int): Dimension of hidden representations in the convolutional layers.
-        groups (int): Number of groups for the convolutional layers involved in adaptation.
-        scale (float): Scaling factor applied to the adapted features.
-    
-    Attributes:
-        conv_A (nn.Conv1d): 1D convolutional layer for downsampling projections.
-        conv_B (nn.Conv1d): 1D convolutional layer for upsampling projections.
-        dropout (nn.Dropout): Dropout layer for regularization.
-        groups (int): Number of groups for convolutional layers.
-        scale (float): Scaling factor for the adapted features.
-    
-    Methods:
-        forward(x, weights=None): Forward pass through the RepAdapter for feature adaptation.
-    
-    Returns:
-        torch.Tensor: Adapted output tensor after applying convolution and modulation.
-    """
-
-    def __init__(
-            self,
-            in_features=768,
-            hidden_dim=8,
-            groups=2,
-            scale=1
-    ):
-        super().__init__()
-        self.conv_A = nn.Conv1d(in_features,hidden_dim,1,groups=1,bias=True)
-        self.conv_B = nn.Conv1d(hidden_dim, in_features, 1, groups=groups, bias=True)
-
-        self.dropout = nn.Dropout(0.1)
-        self.groups = groups
-        self.scale = scale
-
-        nn.init.xavier_uniform_( self.conv_A.weight)
-        nn.init.zeros_(self.conv_A.bias)
-        nn.init.zeros_(self.conv_B.weight)
-        nn.init.zeros_(self.conv_B.bias)
-
-    def forward(self, x, weights=None):
-        r"""Perform a forward pass through the RepAdapter for feature adaptation.
-        
-        Args:
-            x (torch.Tensor): Input tensor to the RepAdapter.
-            weights (torch.Tensor, optional): Not used in this implementation.
-        
-        Returns:
-            torch.Tensor: Adapted output tensor after applying convolution and modulation.
-        """
-        with autocast():
-            x = x.transpose(1,2)
-            x = self.conv_B(self.dropout(self.conv_A(x)))
-            x = x.transpose(1,2).contiguous()
-        return x.float()
-
 def forward_llama_attn(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor], adapter=None):
     if self.training and self.gradient_checkpointing:
         h = x + self.drop_path(torch.utils.checkpoint.checkpoint(self.attention, self.adapter_attn(self.attention_norm(x)), start_pos, freqs_cis, mask))
@@ -176,14 +111,19 @@ def forward_llama_attn_cache(self, x: torch.Tensor, start_pos: int, freqs_cis: t
     out = h + self.drop_path(self.feed_forward.forward(self.ffn_norm(h)))
     return out
 
+def forward_diht(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, key_padding_mask: Optional[torch.Tensor]=None):
+    x = x + self.attention(self.adapter_attn(self.ln_1(x)), attn_mask=attn_mask, key_padding_mask=key_padding_mask)
+    x = x + self.mlp(self.ln_2(x))
+    return x
+
 def forward_alip(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
     x = x + self.ln_attn(self.adapter_attn(self.attention(self.ln_1(x), attn_mask=attn_mask)))
     x = x + self.mlp(self.ln_2(x))
     return x
 
-def forward_alip_full(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None):
-    x = x + self.ln_attn(self.adapter_attn(self.attention(self.ln_1(x), attn_mask=attn_mask)))
-    x = x + self.mlp(self.adapter_mlp(self.ln_2(x)))
+def forward_clip(self, x: torch.Tensor):
+    x = x + self.attention(self.adapter_attn(self.ln_1(x)))
+    x = x + self.mlp(self.ln_2(x))
     return x
 
 def set_MMAdapter(model, method, dim=8, s=1, set_forward=True,t=10,gradient_checkpointing=False):
@@ -203,22 +143,16 @@ def set_MMAdapter(model, method, dim=8, s=1, set_forward=True,t=10,gradient_chec
             set_MMAdapter(_, method, dim, s, set_forward=set_forward,t=t,gradient_checkpointing=gradient_checkpointing)
 
 
-from open_alip.model import ResidualAttentionBlock
+# from open_alip.model import ResidualAttentionBlock
+from diht.model import ResidualAttentionBlock
 def set_Clip_Adapter(model, method, dim=8, s=1, set_forward=True, t=10.):
     for _ in model.children():
         if type(_) == ResidualAttentionBlock:
-            if method=='router':
-                _.adapter_attn = RepAdapter_Router(768, hidden_dim=dim, scale=s,  t=t)
-            elif method=='router_block':
-                _.adapter_attn = RepAdapter_Router(768, hidden_dim=dim, scale=s,  t=t)
-                _.adapter_mlp = RepAdapter_Router(768, hidden_dim=dim, scale=s,  t=t)
-            else:
-                _.adapter_attn = RepAdapter(768, hidden_dim=dim, scale=s)
+            _.adapter_attn = RepAdapter_Router(1024, hidden_dim=dim, scale=s,  t=t)
             _.s = s
-            if method=='router_block':
-                bound_method = forward_alip_full.__get__(_, _.__class__)
-            else:
-                bound_method = forward_alip.__get__(_, _.__class__)
+            bound_method = forward_diht.__get__(_, _.__class__)
+            # bound_method = forward_alip.__get__(_, _.__class__)
+            # bound_method = forward_clip.__get__(_, _.__class__)
             if set_forward:
                 setattr(_, 'forward', bound_method)
         elif len(list(_.children())) != 0:
