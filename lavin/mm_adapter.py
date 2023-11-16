@@ -2,7 +2,7 @@
 import torch
 from torch import nn
 import lavin
-from typing import Optional, Tuple
+from typing import Optional
 from  torch.cuda.amp import autocast
 import lavin.eval_model
 
@@ -58,7 +58,7 @@ class RepAdapter_Router(nn.Module):
             t=10.
     ):
         super().__init__()
-        self.conv_A = nn.Conv1d(in_features,hidden_dim,1,groups=1,bias=True) # Down-scale conv
+        self.conv_A = nn.Conv1d(in_features,hidden_dim, 1, groups=1, bias=True) # Down-scale conv
         self.conv_B = nn.Conv1d(hidden_dim, in_features, 1, groups=groups, bias=True) # Up-scale conv 1
         self.conv_D = nn.Conv1d(hidden_dim, in_features, 1, groups=groups, bias=True) # Up-scale conv 2
         self.expert_weights = nn.Linear(in_features,2)

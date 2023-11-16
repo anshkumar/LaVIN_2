@@ -185,7 +185,7 @@ class InstrcutDataSet(Data.Dataset):
 
         print(f"number of problems in split {split}: {len(self.qids)}\n")
 
-        self.transforms=transforms.Compose([transforms.Resize((224, 224), interpolation=Image.BICUBIC),transforms.ToTensor(), transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)])
+        self.transforms=transforms.Compose([transforms.Resize((336, 336), interpolation=Image.BICUBIC),transforms.ToTensor(), transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)])
 
     def tokenize(self,prompt,answer,max_words=512):
         example=prompt+answer
@@ -222,7 +222,7 @@ class InstrcutDataSet(Data.Dataset):
             image = self.transforms(image)
             indicator=1
         else:
-            image=torch.Tensor(torch.zeros(3,224,224).float())
+            image=torch.Tensor(torch.zeros(3,336,336).float())
             indicator=0
 
         # print(prompt_question,prompt_answer)

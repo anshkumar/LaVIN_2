@@ -18,11 +18,11 @@ from fairscale.nn.model_parallel.layers import (
 
 from torch.nn import Embedding, Linear
 import torch
-import pdb
+# import pdb
 from timm.models.layers import  DropPath
-import clip
+# import clip
 from diht import model_zoo
-from open_alip import create_model
+# from open_alip import create_model
 from  torch.cuda.amp import autocast
 
 @dataclass

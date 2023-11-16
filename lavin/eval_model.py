@@ -8,9 +8,9 @@ import math
 import torch
 from torch import nn
 import torch.nn.functional as F
-import clip
+# import clip
 from diht import model_zoo
-from open_alip import create_model
+# from open_alip import create_model
 import fairscale.nn.model_parallel.initialize as fs_init
 from fairscale.nn.model_parallel.layers import (
     ParallelEmbedding,

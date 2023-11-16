@@ -118,7 +118,7 @@ def LaVIN(args):
                 trainable_names.append(name)
             else:
                 param.requires_grad = False
-    print(trainable_names)
+    # print(trainable_names)
     print('  + Number of trainable params: %.2fM' % (total / 1e6))
     return llama
 

@@ -293,8 +293,8 @@ def load(
     model.load_state_dict(state_dict, strict=False)
     model.to(torch.device('cuda'))
 
-    for name, param in model.named_parameters():
-        print(name,param.dtype)
+    # for name, param in model.named_parameters():
+    #     print(name,param.dtype)
     generator = LaVIN_Generator(model, tokenizer)
     print(f"Loaded in {time.time() - start_time:.2f} seconds")
     return generator
@@ -404,7 +404,7 @@ def main(
             if len(pred) >= 1:
                 pred = pred[0]  # 'A', 'B', ...
             else:
-                print(result)
+                # print(result)
                 pred = "FAILED"
             preds.append(pred)
 
