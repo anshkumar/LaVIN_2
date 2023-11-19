@@ -42,7 +42,7 @@ def get_args_parser():
     parser.add_argument('--cpu_load',  action='store_true',   help='load the model on cpu and avoid OOM on gpu')
 
     #block is not supported now.
-    parser.add_argument('--adapter_type', type=str, default='attn', metavar='LENGTH',choices=['block','attn'],
+    parser.add_argument('--adapter_type', type=str, default='attn', metavar='LENGTH',choices=['block','attn','loha'],
                         help='the insert position  of adapter layer')
 
 

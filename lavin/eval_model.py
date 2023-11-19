@@ -146,11 +146,36 @@ class Attention(nn.Module):
             )
         ).cuda()
         self.gate = torch.nn.Parameter(torch.zeros(1, self.n_local_heads, 1, 1))
+        
+        ########################################################################
+        self.adapter_attn_wq_l1 = nn.Linear(args.dim, 2, bias=False)
+        self.adapter_attn_wq_l2 = nn.Linear(2, args.dim, bias=False)
+
+        self.adapter_attn_wk_l1 = nn.Linear(args.dim, 2, bias=False)
+        self.adapter_attn_wk_l2 = nn.Linear(2, args.dim, bias=False)
+
+        self.adapter_attn_wv_l1 = nn.Linear(args.dim, 2, bias=False)
+        self.adapter_attn_wv_l2 = nn.Linear(2, args.dim, bias=False)
+
+        self.adapter_attn_wo_l1 = nn.Linear(args.dim, 2, bias=False)
+        self.adapter_attn_wo_l2 = nn.Linear(2, args.dim, bias=False)
+
+        nn.init.zeros_(self.adapter_attn_wq_l2.weight.data)
+        nn.init.zeros_( self.adapter_attn_wk_l2.weight.data)
+        nn.init.zeros_( self.adapter_attn_wv_l2.weight.data)
+        nn.init.zeros_( self.adapter_attn_wo_l2.weight.data)
+        ########################################################################
 
 
     def forward(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor], adapter=None):
         bsz, seqlen, _ = x.shape
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
+        
+        ########################################################################
+        xq = xq + self.adapter_attn_wq_l2(self.adapter_attn_wq_l1(x))
+        xk = xk + self.adapter_attn_wk_l2(self.adapter_attn_wk_l1(x))
+        xv = xv + self.adapter_attn_wv_l2(self.adapter_attn_wv_l1(x))
+        ########################################################################
 
         xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
         xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
@@ -189,7 +214,11 @@ class Attention(nn.Module):
             1, 2
         ).contiguous().view(bsz, seqlen, -1)
 
-        return self.wo(output)
+        ########################################################################
+        return self.wo(output) + self.adapter_attn_wo_l2(self.adapter_attn_wo_l1(output))
+        ########################################################################
+
+        # return self.wo(output)
 
 
 class FeedForward(nn.Module):
@@ -217,8 +246,28 @@ class FeedForward(nn.Module):
             dim, hidden_dim, bias=False, gather_output=False, init_method=lambda x: x
         )
 
+        ########################################################################
+        self.adapter_ff_w1_l1 = nn.Linear(dim, 2, bias=False)
+        self.adapter_ff_w1_l2 = nn.Linear(2, hidden_dim, bias=False)
+        
+        self.adapter_ff_w2_l1 = nn.Linear(hidden_dim, 2, bias=False)
+        self.adapter_ff_w2_l2 = nn.Linear(2, dim, bias=False)
+        
+        self.adapter_ff_w3_l1 = nn.Linear(dim, 2, bias=False)
+        self.adapter_ff_w3_l2 = nn.Linear(2, hidden_dim, bias=False)
+        
+        nn.init.zeros_(self.adapter_ff_w1_l2.weight.data)
+        nn.init.zeros_(self.adapter_ff_w2_l2.weight.data)
+        nn.init.zeros_(self.adapter_ff_w3_l2.weight.data)
+        ########################################################################
+        
     def forward(self, x):
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        ########################################################################
+        out = F.silu(self.w1(x) + self.adapter_ff_w1_l2(self.adapter_ff_w1_l1(x))) * (self.w3(x) + self.adapter_ff_w3_l2(self.adapter_ff_w3_l1(x)))
+        return self.w2(out) + self.adapter_ff_w2_l2(self.adapter_ff_w2_l1(out))
+        ########################################################################
+        
+        # return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 
 class TransformerBlock(nn.Module):
@@ -293,8 +342,8 @@ class Transformer(nn.Module):
         _, _, self.backbone = model_zoo.load_model("diht_vitl14_336px", is_train=False)
         self.backbone = self.backbone.to(torch.device("cuda"))
 
-        self.adapter_proj = AdapterMLP(1024, params.hidden_proj, params.dim).float()
-        self.adapter_modality_embedding=nn.Embedding(2,params.dim).float()
+        self.adapter_proj = AdapterMLP(1024, params.hidden_proj, params.dim)
+        self.adapter_modality_embedding=nn.Embedding(2,params.dim)
 
     @torch.inference_mode()
     def forward(self, tokens: torch.Tensor, start_pos: int):

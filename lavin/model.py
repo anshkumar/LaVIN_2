@@ -126,7 +126,7 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
     )
 
 class Attention(nn.Module):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: ModelArgs, index: int):
         super().__init__()
 
         self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
@@ -135,6 +135,7 @@ class Attention(nn.Module):
         self.n_local_kv_heads = self.n_kv_heads // model_parallel_size
         self.n_rep = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = args.dim // args.n_heads
+        self.index = index
 
         #modified bias for reparameterizing
         self.wq = ColumnParallelLinear(
@@ -166,6 +167,25 @@ class Attention(nn.Module):
             init_method=lambda x: x,
         )
 
+        ########################################################################
+        self.adapter_attn_wq_l1 = nn.Linear(args.dim, 2, bias=False)
+        self.adapter_attn_wq_l2 = nn.Linear(2, args.dim, bias=False)
+
+        self.adapter_attn_wk_l1 = nn.Linear(args.dim, 2, bias=False)
+        self.adapter_attn_wk_l2 = nn.Linear(2, args.dim, bias=False)
+
+        self.adapter_attn_wv_l1 = nn.Linear(args.dim, 2, bias=False)
+        self.adapter_attn_wv_l2 = nn.Linear(2, args.dim, bias=False)
+
+        self.adapter_attn_wo_l1 = nn.Linear(args.dim, 2, bias=False)
+        self.adapter_attn_wo_l2 = nn.Linear(2, args.dim, bias=False)
+
+        nn.init.zeros_(self.adapter_attn_wq_l2.weight.data)
+        nn.init.zeros_( self.adapter_attn_wk_l2.weight.data)
+        nn.init.zeros_( self.adapter_attn_wv_l2.weight.data)
+        nn.init.zeros_( self.adapter_attn_wo_l2.weight.data)
+        ########################################################################
+
         # self.cache_k = torch.zeros(
         #     (
         #         args.max_batch_size,
@@ -189,6 +209,12 @@ class Attention(nn.Module):
         bsz, seqlen, _ = x.shape
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
 
+        ########################################################################
+        xq = xq + self.adapter_attn_wq_l2(self.adapter_attn_wq_l1(x))
+        xk = xk + self.adapter_attn_wk_l2(self.adapter_attn_wk_l1(x))
+        xv = xv + self.adapter_attn_wv_l2(self.adapter_attn_wv_l1(x))
+        ########################################################################
+
         xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
         xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
         xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
@@ -197,7 +223,6 @@ class Attention(nn.Module):
 
         keys = xk
         values = xv
-
 
         xq = xq.transpose(1, 2)
         keys = keys.transpose(1, 2)
@@ -209,7 +234,11 @@ class Attention(nn.Module):
         output = torch.matmul(scores, values)  # (bs, n_local_heads, slen, head_dim)
         output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
 
-        return self.wo(output)
+        ########################################################################
+        return self.wo(output) + self.adapter_attn_wo_l2(self.adapter_attn_wo_l1(output))
+        ########################################################################
+
+        # return self.wo(output)
 
 class FeedForward(nn.Module):
     def __init__(
@@ -218,9 +247,11 @@ class FeedForward(nn.Module):
         hidden_dim: int,
         multiple_of: int,
         ffn_dim_multiplier: Optional[float],
+        index: int
     ):
         super().__init__()
         hidden_dim = int(2 * hidden_dim / 3)
+        self.index = index
         # custom dim factor multiplier
         if ffn_dim_multiplier is not None:
             hidden_dim = int(ffn_dim_multiplier * hidden_dim)
@@ -236,8 +267,27 @@ class FeedForward(nn.Module):
             dim, hidden_dim, bias=False, gather_output=False, init_method=lambda x: x
         )
 
+        ########################################################################
+        self.adapter_ff_w1_l1 = nn.Linear(dim, 2, bias=False)
+        self.adapter_ff_w1_l2 = nn.Linear(2, hidden_dim, bias=False)
+        
+        self.adapter_ff_w2_l1 = nn.Linear(hidden_dim, 2, bias=False)
+        self.adapter_ff_w2_l2 = nn.Linear(2, dim, bias=False)
+        
+        self.adapter_ff_w3_l1 = nn.Linear(dim, 2, bias=False)
+        self.adapter_ff_w3_l2 = nn.Linear(2, hidden_dim, bias=False)
+        
+        nn.init.zeros_(self.adapter_ff_w1_l2.weight.data)
+        nn.init.zeros_(self.adapter_ff_w2_l2.weight.data)
+        nn.init.zeros_(self.adapter_ff_w3_l2.weight.data)
+        ########################################################################
+
     def forward(self, x):
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        ########################################################################
+        out = F.silu(self.w1(x) + self.adapter_ff_w1_l2(self.adapter_ff_w1_l1(x))) * (self.w3(x) + self.adapter_ff_w3_l2(self.adapter_ff_w3_l1(x)))
+        return self.w2(out) + self.adapter_ff_w2_l2(self.adapter_ff_w2_l1(out))
+        ########################################################################
+        # return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 class TransformerBlock(nn.Module):
     def __init__(self, layer_id: int, args: ModelArgs):
@@ -245,9 +295,9 @@ class TransformerBlock(nn.Module):
         self.n_heads = args.n_heads
         self.dim = args.dim
         self.head_dim = args.dim // args.n_heads
-        self.attention = Attention(args)
+        self.attention = Attention(args, layer_id)
         self.feed_forward = FeedForward(
-            dim=args.dim, hidden_dim=4 * args.dim, multiple_of=args.multiple_of, ffn_dim_multiplier=args.ffn_dim_multiplier
+            dim=args.dim, hidden_dim=4 * args.dim, multiple_of=args.multiple_of, ffn_dim_multiplier=args.ffn_dim_multiplier, index=layer_id
         )
         self.layer_id = layer_id
         self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
@@ -313,8 +363,8 @@ class Transformer(nn.Module):
         # self.backbone = clip.load('ViT-L/14')[0] 
         _, _, self.backbone = model_zoo.load_model("diht_vitl14_336px", is_train=False)
         self.backbone = self.backbone.to(torch.device("cuda"))
-        self.adapter_proj = AdapterMLP(1024, params.hidden_proj, params.dim).float() # (512, 128, 4096)
-        self.adapter_modality_embedding=nn.Embedding(2, params.dim).float()
+        self.adapter_proj = AdapterMLP(1024, params.hidden_proj, params.dim) # (512, 128, 4096)
+        self.adapter_modality_embedding=nn.Embedding(2, params.dim)
 
     def insert_image_embeds(self, examples, labels, image_embeds, prefix_img, prefix_nonimg, img_indicators):
         r"""Insert image embeddings into the input sequences and adjust labels accordingly.
@@ -356,12 +406,12 @@ class Transformer(nn.Module):
         return new_examples,new_labels
 
     def forward(self, examples, labels,images=None, prefix_img=None, prefix_nonimg=None,img_indicators=None):
-        image_embeds = self.backbone.encode_image(images.half()).half() # [1, 512]
+        image_embeds = self.backbone.encode_image(images.half()) # [336, 336] -> [6, 512]
         # image_embeds = image_embeds.unsqueeze(1)
 
         if isinstance(img_indicators,list):
             img_indicators = torch.Tensor(img_indicators).to(image_embeds.device).long() # [1]
-        modality_embed=self.adapter_modality_embedding(img_indicators.unsqueeze(1)) # [1, 1, 4096]
+        modality_embed=self.adapter_modality_embedding(img_indicators.unsqueeze(1)) # [6, 512] - > [1, 6, 4096]
 
         image_embeds=self.adapter_proj(image_embeds) # [1, 6, 4096]
 
@@ -373,7 +423,7 @@ class Transformer(nn.Module):
 
         h, labels=self.insert_image_embeds(examples, labels, image_embeds, prefix_img, prefix_nonimg, img_indicators)
 
-        h=torch.cat([modality_embed.half(),h],1)[:,:seqlen]
+        h=torch.cat([modality_embed,h],1)[:,:seqlen]
         modality_labels=torch.zeros(_bsz,1).to(labels.device).type_as(labels)
         labels=torch.cat([modality_labels,labels],1)[:,:seqlen]
         
@@ -391,7 +441,8 @@ class Transformer(nn.Module):
             h = layer(h, start_pos, freqs_cis, mask)
 
         h = self.norm(h)
-        output = self.output(h)
+        output = self.output(h.half())
+        # output = self.output(h)
         output = output[:, :-1, :].reshape(-1, self.vocab_size)
         labels = labels[:, 1:].flatten()
 

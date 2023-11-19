@@ -95,7 +95,10 @@ def LaVIN(args):
 
     if args.bits in ['4bit','8bit']:
         from util.quantization import quant_model_bnb
-        llama.layers=quant_model_bnb(llama.layers,quant_bit=args.bits)
+        llama.layers=quant_model_bnb(
+            llama.layers,
+            quant_bit=args.bits,
+            keep_in_fp32_modules=["adapter"])
     print('quantization')
     llama.load_state_dict(checkpoint, strict=False)
     print('load_state_dict')
@@ -103,7 +106,7 @@ def LaVIN(args):
         apply_model_delta_online(llama,'../data/weights/vicuna_'+args.llm_model)
 
     if args.adapter_type=='block' or  args.adapter_type=='attn':
-        set_MMAdapter(llama,args.adapter_type,dim=args.adapter_dim,s=args.adapter_scale,t=args.temperature,gradient_checkpointing=args.gradient_checkpointing)
+        # set_MMAdapter(llama,args.adapter_type,dim=args.adapter_dim,s=args.adapter_scale,t=args.temperature,gradient_checkpointing=args.gradient_checkpointing)
         set_Clip_Adapter(llama.backbone.visual,args.visual_adapter_type,dim=args.adapter_dim,s=args.adapter_scale,t=args.temperature)
     print('Adapter')
     learnable_keys=['adapter']

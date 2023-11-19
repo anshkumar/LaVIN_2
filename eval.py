@@ -277,8 +277,9 @@ def load(
         from util.quantization import quant_model_bnb
         model.layers = quant_model_bnb(model.layers, quant_bit='4bit')
 
-    set_MMAdapter(model, adapter_type, dim=adapter_dim, s=adapter_scale,t=temperature)
-    set_Clip_Adapter(model.backbone.visual, visual_adapter_type, dim=adapter_dim, s=adapter_scale,t=temperature)
+    if adapter_type=='block' or  adapter_type=='attn':
+        # set_MMAdapter(model, adapter_type, dim=adapter_dim, s=adapter_scale,t=temperature)
+        set_Clip_Adapter(model.backbone.visual, visual_adapter_type, dim=adapter_dim, s=adapter_scale,t=temperature)
 
     model.load_state_dict(checkpoint, strict=False)
 
