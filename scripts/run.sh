@@ -58,12 +58,10 @@ torchrun --nproc_per_node 1 \
     --weight_decay 0.02 \
     --output_dir ./LaVIN-7B/\
     --adapter_type attn\
-    --adapter_dim 8\
+    --adapter_dim 16\
     --adapter_scale 1\
     --n_prompt 6 \
     --prompt_format QCM-ALE \
     --temperature 10.\
     --visual_adapter_type router \
-    --gradient_checkpointing \
-    --bits 4bit \
-    --cpu_load
+    --bits 4bit 

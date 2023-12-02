@@ -54,27 +54,18 @@ class RepAdapter_Router(nn.Module):
             in_features=768,
             hidden_dim=8,
             groups=2,
-            scale=1,
-            t=10.
     ):
         super().__init__()
         self.conv_A = nn.Conv1d(in_features,hidden_dim, 1, groups=1, bias=True) # Down-scale conv
         self.conv_B = nn.Conv1d(hidden_dim, in_features, 1, groups=groups, bias=True) # Up-scale conv 1
-        self.conv_D = nn.Conv1d(hidden_dim, in_features, 1, groups=groups, bias=True) # Up-scale conv 2
-        self.expert_weights = nn.Linear(in_features,2)
-        self.dropout = nn.Dropout(0.1)
         self.groups = groups
-        self.scale = scale
-        self.t = t
 
-        nn.init.xavier_uniform_( self.conv_A.weight)
+        nn.init.xavier_uniform_(self.conv_A.weight)
         nn.init.zeros_(self.conv_A.bias)
         nn.init.zeros_(self.conv_B.weight)
         nn.init.zeros_(self.conv_B.bias)
-        nn.init.zeros_(self.conv_D.weight)
-        nn.init.zeros_(self.conv_D.bias)
 
-    def forward(self, x,weights=None):
+    def forward(self, x, batch_transpose=False):
         r"""Perform a forward pass through the modality modulator with dynamic routing.
         
         Args:
@@ -85,13 +76,14 @@ class RepAdapter_Router(nn.Module):
         Returns:
             torch.Tensor: Output tensor after applying dynamic modality adaptation and routing.
         """
-        with autocast():
-            if weights is None:
-                weights = torch.softmax(self.expert_weights(x[:,0])/self.t,-1).half()
+        with autocast():            
+            if batch_transpose:
+                x = x.transpose(0, 1)
             x = x.transpose(1,2)
-            x_ = self.dropout(self.conv_A(x))
-            x = self.conv_B(x_)*self.scale*weights[:,0,None,None] + self.conv_D(x_)*self.scale*weights[:,1,None,None] + x
+            x = self.conv_B(self.conv_A(x)) + x
             x = x.transpose(1,2).contiguous()
+            if batch_transpose:
+                x = x.transpose(0, 1).contiguous()
         return x
 
 def forward_llama_attn(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor], adapter=None):
@@ -104,15 +96,15 @@ def forward_llama_attn(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.T
     return out
 
 def forward_llama_attn_cache(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor], adapter=None):
-    bs_=x.shape[0]
     if start_pos==0:
-        self.cache_weights[:bs_]=torch.softmax(self.adapter_attn.expert_weights(self.attention_norm(x)[:,0].float())/self.t,-1).half()
-    h = x + self.drop_path(self.attention.forward(self.adapter_attn(self.attention_norm(x),weights=self.cache_weights[:bs_]), start_pos, freqs_cis, mask, adapter))
+        # Use expert_weights/cache_weights only once during the chat/generation. (Or have the zero in self.attention_norm(x)[:,0] will give problem as the sentence now is starting from start_pos instead of 0)
+        self.cache_weights=torch.sigmoid(self.adapter_attn.expert_weights(self.attention_norm(x)[:,0])/self.t).half()
+    h = x + self.drop_path(self.attention.forward(self.adapter_attn(self.attention_norm(x), weights=self.cache_weights), start_pos, freqs_cis, mask, adapter))
     out = h + self.drop_path(self.feed_forward.forward(self.ffn_norm(h)))
     return out
 
 def forward_diht(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None, key_padding_mask: Optional[torch.Tensor]=None):
-    x = x + self.attention(self.adapter_attn(self.ln_1(x)), attn_mask=attn_mask, key_padding_mask=key_padding_mask)
+    x = x + self.attention(self.adapter_attn(self.ln_1(x), batch_transpose=True), attn_mask=attn_mask, key_padding_mask=key_padding_mask)
     x = x + self.mlp(self.ln_2(x))
     return x
 
@@ -129,30 +121,21 @@ def forward_clip(self, x: torch.Tensor):
 def set_MMAdapter(model, method, dim=8, s=1, set_forward=True,t=10,gradient_checkpointing=False):
     for _ in model.children():
         if type(_) == lavin.model.TransformerBlock or type(_) == lavin.eval_model.TransformerBlock:
-            _.adapter_attn = RepAdapter_Router(_.dim,hidden_dim=dim,scale=s,t=t)
-            _.s = s
-            _.t=t
+            _.adapter_attn = RepAdapter_Router(_.dim,hidden_dim=dim)
             _.gradient_checkpointing = gradient_checkpointing
-            if type(_) == lavin.eval_model.TransformerBlock:
-                bound_method = forward_llama_attn_cache.__get__(_, _.__class__)
-            else:
-                bound_method = forward_llama_attn.__get__(_, _.__class__)
+            bound_method = forward_llama_attn.__get__(_, _.__class__)
             if set_forward:
                 setattr(_, 'forward', bound_method)
         elif len(list(_.children())) != 0:
             set_MMAdapter(_, method, dim, s, set_forward=set_forward,t=t,gradient_checkpointing=gradient_checkpointing)
 
 
-# from open_alip.model import ResidualAttentionBlock
 from diht.model import ResidualAttentionBlock
 def set_Clip_Adapter(model, method, dim=8, s=1, set_forward=True, t=10.):
     for _ in model.children():
         if type(_) == ResidualAttentionBlock:
-            _.adapter_attn = RepAdapter_Router(1024, hidden_dim=dim, scale=s,  t=t)
-            _.s = s
+            _.adapter_attn = RepAdapter_Router(1024, hidden_dim=dim)
             bound_method = forward_diht.__get__(_, _.__class__)
-            # bound_method = forward_alip.__get__(_, _.__class__)
-            # bound_method = forward_clip.__get__(_, _.__class__)
             if set_forward:
                 setattr(_, 'forward', bound_method)
         elif len(list(_.children())) != 0:

@@ -105,7 +105,7 @@ def LaVIN(args):
     if args.adapter_type=='block' or  args.adapter_type=='attn':
         set_MMAdapter(llama,args.adapter_type,dim=args.adapter_dim,s=args.adapter_scale,t=args.temperature,gradient_checkpointing=args.gradient_checkpointing)
         set_Clip_Adapter(llama.backbone.visual,args.visual_adapter_type,dim=args.adapter_dim,s=args.adapter_scale,t=args.temperature)
-    print('Adapter')
+    # print('Adapter')
     learnable_keys=['adapter']
     total=0.
     trainable_names=[]
@@ -118,7 +118,7 @@ def LaVIN(args):
                 trainable_names.append(name)
             else:
                 param.requires_grad = False
-    # print(trainable_names)
+    print(trainable_names)
     print('  + Number of trainable params: %.2fM' % (total / 1e6))
     return llama
 

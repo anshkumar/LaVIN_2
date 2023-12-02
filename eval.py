@@ -400,7 +400,6 @@ def main(
 
         for result in results:
             pred = pattern.findall(result)
-
             if len(pred) >= 1:
                 pred = pred[0]  # 'A', 'B', ...
             else:

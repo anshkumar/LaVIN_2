@@ -26,19 +26,9 @@ class LowRank(nn.Module):
   
   def _init_parameters(self):
     # Initialization affects the convergence stability for our parameterization
-    fan = nn.init._calculate_correct_fan(self.T, mode='fan_in')
-    gain = nn.init.calculate_gain('relu', 0)
-    std_t = gain / np.sqrt(fan)
-
-    fan = nn.init._calculate_correct_fan(self.O, mode='fan_in')
-    std_o = gain / np.sqrt(fan)
-
-    fan = nn.init._calculate_correct_fan(self.I, mode='fan_in')
-    std_i = gain / np.sqrt(fan)
-
-    nn.init.normal_(self.T, 0, std_t)
-    nn.init.normal_(self.O, 0, std_o)
-    nn.init.normal_(self.I, 0, std_i)
+    nn.init.zeros_(self.T)
+    nn.init.zeros_(self.O)
+    nn.init.zeros_(self.I)
 
   def forward(self):
     # torch.einsum simplify the tensor produce (matrix multiplication)

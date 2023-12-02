@@ -336,6 +336,7 @@ class Transformer(nn.Module):
         new_labels=[]
         for i, (example,label) in enumerate(zip(examples,labels)):
             if img_indicators[i]>0.:
+                # example[:1]: BOS
                 new_example=torch.cat([example[:1],prefix_img,image_embeds[i],example[1:]],0)
                 new_label=torch.cat([label[:1],
                                      torch.zeros(prefix_img.shape[0]+image_embeds.shape[1]).to(examples.device).type_as(labels),
@@ -366,7 +367,7 @@ class Transformer(nn.Module):
         image_embeds=self.adapter_proj(image_embeds) # [1, 6, 4096]
 
         _bsz, seqlen = examples.shape # [1, 128] (batch size, sequence length)
-
+    
         examples = self.tok_embeddings(examples) # [1, 128, 4096] (batch size, sequence length, embedding dim)
         prefix_img=self.tok_embeddings(prefix_img.unsqueeze(0)).squeeze(0) # [3, 4096]
         prefix_nonimg=self.tok_embeddings(prefix_nonimg.unsqueeze(0)).squeeze(0) # [5, 4096]
