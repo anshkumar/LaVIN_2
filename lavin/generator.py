@@ -1,33 +1,12 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# This software may be used and distributed according to the terms of the GNU General Public License version 3.
-
 from typing import List
-
 import torch
-
 from lavin.tokenizer import Tokenizer
 from lavin.eval_model import Transformer
-from  torch.cuda.amp import autocast
 
 class LaVIN_Generator:
     def __init__(self, model: Transformer, tokenizer: Tokenizer):
         self.model = model
         self.tokenizer = tokenizer
-        # self.backbone = clip.load('ViT-B/16', device='cpu')[0]
-
-    def insert_image_embeds(self,examples,image_embeds,prefix_img,prefix_nonimg,img_indicators):
-        _bsz, seqlen,_ = examples.shape
-        new_examples=[]
-        for i, example in enumerate(examples):
-            if img_indicators[i]>0.:
-                new_example=torch.cat([example[:1],prefix_img,image_embeds[i],example[1:]],0)
-                new_example = new_example[:seqlen]
-            else:
-                new_example=torch.cat([example[:1],prefix_nonimg,example[1:]],0)
-                new_example = new_example[:seqlen]
-            new_examples.append(new_example.unsqueeze(0))
-        new_examples = torch.cat(new_examples, 0)
-        return new_examples
 
     @torch.inference_mode()
     def generate(
@@ -45,70 +24,94 @@ class LaVIN_Generator:
         assert bsz <= params.max_batch_size, (bsz, params.max_batch_size)
         self.model.eval()
 
-        prefix_img_token = self.tokenizer.encode("Image: ", bos=True, eos=False)
-        non_prefix_img_token= self.tokenizer.encode("Image: N/A", bos=True, eos=False)
+        prefix_img_token = self.tokenizer.encode("Image: ", bos=True, eos=False) # [BOS, ...]: [1, 7084, 29901, 29871]
+        non_prefix_img_token= self.tokenizer.encode("Image: N/A", bos=True, eos=False) # [BOS, ...]: [1, 7084, 29901, 405, 29914, 29909]
 
         images=images.cuda()
         self.model.backbone.cuda()
 
-        image_embeds= self.model.backbone.encode_image(images.half()).half()
-        image_embeds = image_embeds.unsqueeze(1)
-        image_embeds=self.model.adapter_proj(image_embeds)
-
+        image_embeds= self.model.backbone.encode_image(images.half()).half() # [batch_size, num_feature, feature_dim]: [32, 6, 1024]
+        image_embeds=self.model.adapter_proj(image_embeds) # [batch_size, num_feature, feature_dim]: [32, 6, 4096]
 
         prompt_tokens=[]
-        for i,x in enumerate(prompts):
+        for i, x in enumerate(prompts): # Iterate over a batch of questions and add image and non_image prefix to prompt. image_embeds can not be inserted directly here before applying positional embedding.
             if indicators[i]==1:
-                token_idx=prefix_img_token+[0]*image_embeds[i].shape[0]+self.tokenizer.encode(x, bos=False, eos=False)
+                # [1, 7084, 29901, 29871] + [894, 29901, ..., 29901]
+                token_idx = prefix_img_token + self.tokenizer.encode(x, bos=False, eos=False)
             else:
+                # [1, 7084, 29901, 405, 29914, 29909] + [894, 29901, ..., 29901]
                 token_idx = non_prefix_img_token + self.tokenizer.encode(x, bos=False, eos=False)
             prompt_tokens.append(token_idx)
 
-
         min_prompt_size = min([len(t) for t in prompt_tokens])
-        max_prompt_size = max([len(t) for t in prompt_tokens])
 
-        total_len = min(params.max_seq_len, max_gen_len + max_prompt_size)
+        '''
+        Convert variable length list of list to a fixed size Tensor with padded zeros.
+        Example:
+            Prompts:        [["Hello", "world"],
+                             ["My", "name", "is", "Vedanshu"],
+                             ["Capital", "of", "India", "is", "Delhi"]]
 
-        tokens = torch.full((bsz, total_len), 0).cuda().long()
-        input_text_mask=torch.zeros_like(tokens).bool()
-
+            input_text_mask:[[True, True, False, False, False, False],
+                             [True, True, True, True, False, False],
+                             [True, True, True, True, True, False]]
+        '''
+        tokens = torch.full((bsz, params.max_seq_len), 0).cuda().long()
+        input_text_mask = torch.zeros_like(tokens).bool()
         for k, t in enumerate(prompt_tokens):
-            t=t[:total_len]
-            tokens[k, : len(t)] = torch.tensor(t).long()
-            input_text_mask[k,:len(t)]=True
+            t=t[:params.max_seq_len]
+            tokens[k, :len(t)] = torch.tensor(t).long()
+            input_text_mask[k, :len(t)]=True
 
-        token_embeds=self.model.tok_embeddings(tokens)
+        token_embeds=self.model.tok_embeddings(tokens) # [batch_size, seq_len] -> [batch_size, seq_len, feature_dim]: [32, 512, 4096]
         indicators=torch.Tensor(indicators).cuda().long()
-        modality_embedding=self.model.adapter_modality_embedding(indicators).unsqueeze(1)
+        modality_embedding=self.model.adapter_modality_embedding(indicators).unsqueeze(1) #  [batch_size] -> [batch_size, 1, feature_dim]: [32, 1, 4096]
 
         for i in range(len(token_embeds)):
-            if indicators[i]==1:
+            if indicators[i] > 0:
                 pos=len(prefix_img_token)
-                #insert image emebedding into the sequence
-                image_token_embed=torch.cat([token_embeds[i,:pos],image_embeds[i],token_embeds[i,pos+image_embeds[i].shape[0]:]],0)
-                token_embeds[i]=image_token_embed
+                # Insert image emebedding into the sequence here. Since, positional embedding have beedn inserted, image embedding can be inserted with the prompts.
+                image_token_embed = torch.cat([token_embeds[i,:pos], image_embeds[i], token_embeds[i, pos:]],0)
+                token_embeds[i] = image_token_embed[:params.max_seq_len]
 
         start_pos = min_prompt_size
         prev_pos = 0
-        for cur_pos in range(start_pos, total_len):
+        for cur_pos in range(start_pos, params.max_seq_len):
+            '''
+            The prev_pos and cur_pos will like this:
+                0, 2
+                2, 3
+                3, 4
+                ...
+            
+                The loop will move min_prompt_size in first iteration, then will move by 1 in subsequent iterations. 
+            '''
 
             if prev_pos==0:
-                h=torch.cat([modality_embedding,token_embeds[:,prev_pos:cur_pos]],1)
+                h = torch.cat([modality_embedding, token_embeds[:, prev_pos:cur_pos]], 1)
             else:
-                h=token_embeds[:,prev_pos:cur_pos]
-            logits = self.model.forward(h, prev_pos)
+                h = token_embeds[:,prev_pos:cur_pos]
+            logits = self.model.forward(h, prev_pos) # [batch_size, word_size]: [32, 32000]
             if temperature > 0:
-                probs = torch.softmax(logits / temperature, dim=-1)
-                next_token = sample_top_p(probs, top_p)
+                probs = torch.softmax(logits / temperature, dim=-1) # [batch_size, word_size]: [32, 32000]
+                next_token = sample_top_p(probs, top_p) # [32, 1]
             else:
-                next_token = torch.argmax(logits, dim=-1)
-            next_token = next_token.reshape(-1)
-            # only replace token if prompt has already been generated
+                next_token = torch.argmax(logits, dim=-1) # [32, 1]
+            next_token = next_token.reshape(-1) # [32]
 
+            # only replace token if prompt has already been generated
+            '''
+            For the Prompts:[["Hello", "world"],
+                             ["My", "name", "is", "Vedanshu"],
+                             ["Capital", "of", "India", "is", "Delhi"]]
+            The output will be something like this:
+                            [["Hello", "world", "!"],   <-- Next token here only in first iteration.
+                             ["My", "name", "is", "Vedanshu"],  <-- Nothing will be changed here in first iteration.
+                             ["Capital", "of", "India", "is", "Delhi"]]   <-- Nothing will be changed here in first iteration.
+            '''
             next_token_embeds = torch.where(
-                input_text_mask[:, cur_pos,None], token_embeds[:, cur_pos], self.model.tok_embeddings(next_token)
-            )
+                input_text_mask[:, cur_pos, None], token_embeds[:, cur_pos], self.model.tok_embeddings(next_token)
+            ) # [batch_size] -> [batch_size, feature_dim]: [32, 4096]
             token_embeds[:,cur_pos]=next_token_embeds
 
             next_token = torch.where(
@@ -129,9 +132,7 @@ class LaVIN_Generator:
                 pass
             decoded.append(self.tokenizer.decode(t))
 
-
         return decoded
-
 
 def sample_top_p(probs, p):
     probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)

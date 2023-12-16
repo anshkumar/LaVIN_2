@@ -1,53 +1,72 @@
-import  json, re,random
+import  json, random
 import torch.utils.data as Data
 from torchvision.transforms import transforms
 import os
-from timm.data.constants import IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD
 from PIL import Image
-from util.base_prompt import *
-import torch
+from util.base_prompt import build_prompt
 from lavin import Tokenizer
 import copy
+import torch
+import lightning as L
+
+IMAGENET_DEFAULT_MEAN = (0.48145466, 0.4578275, 0.40821073)
+IMAGENET_DEFAULT_STD = (0.26862954, 0.26130258, 0.27577711)
 
 class ScienceQADataSet(Data.Dataset):
     r"""A custom dataset class for ScienceQA data.
 
     Args:
-        args (namespace): Command line arguments containing data-related configurations.
-        split (str): The data split to use (e.g., "train", "val", "test").
-        model_path (str): Path to the model for tokenization.
+        problems_path (str): Data path for 'problems.json'.
+        pid_splits_path (str): Data path for 'pid_splits.json'.
+        captions_path (str): Data path for 'captions.json'.
+        images_path (str): Data path for images.
+        tokenizer_path (str): Data path for 'tokenizer.model'.
+        split (str): The data split to use (e.g., "train", "val").
         max_words (int, optional): Maximum number of words in a tokenized sequence. Default is 512.
+        image_height (int, optional): Image height for input.
+        image_width (int, optional): Image width for input.
 
-    Attributes:
-        args (namespace): Command line arguments containing data-related configurations.
-        problems (dict): Raw data loaded from 'problems.json'.
-        qids (list): List of question IDs for the specified split.
-        image_path (str): Path to the image data for the specified split.
-        tokenizer (Tokenizer): Tokenizer for processing text data.
-        max_words (int): Maximum number of words in a tokenized sequence.
-        split (str): The data split being used (e.g., "train", "val", "test").
-        transforms (transforms.Compose): Image transformations applied to loaded images.
     """
-    def __init__(self, args, split, model_path, max_words=512):
-        super(ScienceQADataSet, self).__init__()
-        self.args = args
-        self.problems = json.load(open(os.path.join(args.data_root, 'problems.json')))
-        pid_splits = json.load(open(os.path.join(args.data_root, 'pid_splits.json')))
-        captions = json.load(open(args.caption_file))["captions"]
-        self.image_path=os.path.join(args.data_root,'images',split)
-        self.tokenizer = Tokenizer(model_path=model_path + '/tokenizer.model')
+    def __init__(self, 
+                 problems_path, 
+                 pid_splits_path, 
+                 captions_path, 
+                 images_path, 
+                 tokenizer_path, 
+                 split, 
+                 max_words,
+                 image_height,
+                 image_width,
+                 prompt_format,
+                 use_caption,
+                 options
+                ):
+        super().__init__()
+
+        self.problems = json.load(open(problems_path))
+        pid_splits = json.load(open(pid_splits_path))
+        captions = json.load(open(captions_path))["captions"]
+        self.image_path=os.path.join(images_path,split)
+        self.tokenizer = Tokenizer(model_path=tokenizer_path)
         self.max_words = max_words
-        self.split=split
+        self.image_height = image_height
+        self.image_width = image_width
+        self.split = split
+        self.prompt_format = prompt_format
+        self.use_caption = use_caption
+        self.options = options
+
         for qid in self.problems:
             self.problems[qid]['caption'] = captions[qid] if qid in captions else ""
 
         self.qids = pid_splits['%s' % (split)]
 
-        print(f"number of problems in split {split}: {len(self.qids)}\n")
+        self.transforms = transforms.Compose([
+            transforms.Resize((image_height, image_width), interpolation=Image.BICUBIC),
+            transforms.ToTensor(), 
+            transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)])
 
-        self.transforms=transforms.Compose([transforms.Resize((224, 224), interpolation=Image.BICUBIC),transforms.ToTensor(), transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)])
-
-    def tokenize(self,prompt,answer):
+    def tokenize(self, prompt, answer):
         r"""Tokenizes a prompt and an answer, and prepares them for model input.
         
         Args:
@@ -145,14 +164,14 @@ class ScienceQADataSet(Data.Dataset):
             image (torch.Tensor): Processed image data if available, else a tensor of zeros.
             indicator (int): An indicator value (1 or 0) representing image availability.
         """
-        prompt_question,prompt_answer= build_prompt(self.problems,self.qids[idx],self.args)
+        prompt_question,prompt_answer= build_prompt(self.problems, self.qids[idx], self.prompt_format, self.use_caption, self.options)
 
         if self.problems[self.qids[idx]]['image'] is not None:
             image = Image.open(os.path.join(self.image_path, self.qids[idx], 'image.png')).convert('RGB')
             image = self.transforms(image)
             indicator=1
         else:
-            image=torch.Tensor(torch.zeros(3,224,224).float())
+            image=torch.Tensor(torch.zeros(3, self.image_height, self.image_width).float())
             indicator=0
 
         example, labels, example_mask, _=self.tokenize(prompt_question,prompt_answer)
@@ -233,19 +252,89 @@ class InstrcutDataSet(Data.Dataset):
     def shuffle_list(self, list):
         random.shuffle(list)
 
+class ScienceQADataModule(L.LightningDataModule):
+    def __init__(self, 
+                 problems_path: str = "./data/problems.json",
+                 pid_splits_path: str = './data/pid_splits.json', 
+                 captions_path: str = './data/captions.json', 
+                 images_path: str = './data/images/', 
+                 tokenizer_path: str = './data/weights/tokenizer.model',
+                 max_words: int = 512,
+                 image_height: int = 336,
+                 image_width: int = 336,
+                 train_batch_size: int = 1,
+                 val_batch_size: int = 32,
+                 prompt_format: str = 'QCM-ALE',
+                 use_caption: bool = False,
+                 options=["A", "B", "C", "D", "E"],
+                 ):
+        super().__init__()
+        self.save_hyperparameters()
+
+    def setup(self, stage: str):
+        # Assign train/val datasets for use in dataloaders
+        if stage == "fit":
+            self.dataset_train = ScienceQADataSet(
+                problems_path = self.hparams.problems_path, 
+                pid_splits_path = self.hparams.pid_splits_path, 
+                captions_path = self.hparams.captions_path, 
+                images_path = self.hparams.images_path, 
+                tokenizer_path = self.hparams.tokenizer_path, 
+                split = 'train', 
+                max_words = self.hparams.max_words,
+                image_height = self.hparams.image_height,
+                image_width = self.hparams.image_width,
+                prompt_format = self.hparams.prompt_format,
+                use_caption = self.hparams.use_caption,
+                options = self.hparams.options
+                )
+            self.dataset_val = ScienceQADataSet(
+                problems_path = self.hparams.problems_path, 
+                pid_splits_path = self.hparams.pid_splits_path, 
+                captions_path = self.hparams.captions_path, 
+                images_path = self.hparams.images_path, 
+                tokenizer_path = self.hparams.tokenizer_path, 
+                split = 'val', 
+                max_words = self.hparams.max_words,
+                image_height = self.hparams.image_height,
+                image_width = self.hparams.image_width,
+                prompt_format = self.hparams.prompt_format,
+                use_caption = self.hparams.use_caption,
+                options = self.hparams.options
+                )
+
+    def train_dataloader(self):
+        return Data.DataLoader(self.dataset_train, batch_size=self.hparams.train_batch_size)
+
+    def val_dataloader(self):
+        return Data.DataLoader(self.dataset_val, batch_size=self.hparams.val_batch_size)
+
 if __name__ == '__main__':
-    class Cfg():
-        def __init__(self):
-            super(Cfg, self).__init__()
-            self.options = ["A", "B", "C", "D", "E"]
-            self.use_caption = True
-            self.prompt_format = 'CQM-A'
-            self.data_root = '../data'
-            self.output_root = '../output'
-            self.caption_file = '../data/captions.json'
-    cfg=Cfg()
-    dataset=ScienceQADataSet(cfg,'val','../data/weights/')
+    dataset = ScienceQADataModule()
+    dataset.setup(stage="fit")
+        
+    count = 0
+    for example, labels, example_mask, image, indicator in dataset.train_dataloader():
+        count += 1
+    print(F"Total count in training is {count}")
+    print("An Example: ")
+    print()
+    print(example)
+    print(labels)
+    print(example_mask)
+    print(indicator)
+
+    print()
+    print()
+    dataset.setup(stage="val")
     
-    for example, labels, example_mask, image, indicator in dataset:
-        print(example)
-        print(labels)
+    count = 0
+    for example, labels, example_mask, image, indicator in dataset.val_dataloader():
+        count += 1
+    print(F"Total count in validation is {count}")
+    print("An Example: ")
+    print()
+    print(example)
+    print(labels)
+    print(example_mask)
+    print(indicator)

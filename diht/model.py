@@ -215,8 +215,8 @@ class VisualTransformer(nn.Module):
 
         ret_feats=[]
         for i, layer in enumerate(self.transformer.resblocks):
-            x=layer(x)
-            if (i+1)%4==0:
+            x = layer(x)
+            if (i+1)%4 == 0:
                 ret_feats.append(x.permute(1, 0, 2)[:,:1])
                 
         # x = self.transformer(x)
