@@ -3,7 +3,6 @@ from torch import nn
 import lavin
 from typing import Optional
 from  torch.cuda.amp import autocast
-import lavin.eval_model
 from diht.model import ResidualAttentionBlock
 
 class RepAdapter_Router(nn.Module):
@@ -73,7 +72,7 @@ def forward_diht(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None
 
 def set_MMAdapter(model, dim=8, gradient_checkpointing=False):
     for _ in model.children():
-        if type(_) == lavin.model.TransformerBlock or type(_) == lavin.eval_model.TransformerBlock:
+        if type(_) == lavin.model.TransformerBlock:
             _.adapter_attn = RepAdapter_Router(_.dim, hidden_dim=dim)
             _.gradient_checkpointing = gradient_checkpointing
             bound_method = forward_llama_attn.__get__(_, _.__class__)

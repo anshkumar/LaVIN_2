@@ -13,9 +13,9 @@ from diht import model_zoo
 from  torch.cuda.amp import autocast
 import lightning as L
 from pathlib import Path
-from lavin.mm_adapter import set_MMAdapter, set_Clip_Adapter
+from .mm_adapter import set_MMAdapter, set_Clip_Adapter
 import json
-from lavin import Tokenizer
+from .tokenizer import Tokenizer
 import bitsandbytes as bnb
 import timm.optim.optim_factory as optim_factory
 
@@ -194,30 +194,22 @@ class Attention(nn.Module):
         self.wq = nn.Linear(
             args.dim,
             args.n_heads * self.head_dim,
-            bias=False,
-            gather_output=False,
-            init_method=lambda x: x,
+            bias=False
         )
         self.wk = nn.Linear(
             args.dim,
             self.n_kv_heads * self.head_dim,
-            bias=False,
-            gather_output=False,
-            init_method=lambda x: x,
+            bias=False
         )
         self.wv = nn.Linear(
             args.dim,
             self.n_kv_heads * self.head_dim,
-            bias=False,
-            gather_output=False,
-            init_method=lambda x: x,
+            bias=False
         )
         self.wo = nn.Linear(
             args.n_heads * self.head_dim,
             args.dim,
             bias=False,
-            input_is_parallel=True,
-            init_method=lambda x: x,
         )
 
         self.cache_k = torch.zeros(
@@ -296,13 +288,13 @@ class FeedForward(nn.Module):
         hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
 
         self.w1 = nn.Linear(
-            dim, hidden_dim, bias=False, gather_output=False, init_method=lambda x: x
+            dim, hidden_dim, bias=False
         )
         self.w2 = nn.Linear(
-            hidden_dim, dim, bias=False, input_is_parallel=True, init_method=lambda x: x
+            hidden_dim, dim, bias=False
         )
         self.w3 = nn.Linear(
-            dim, hidden_dim, bias=False, gather_output=False, init_method=lambda x: x
+            dim, hidden_dim, bias=False
         )
 
     def forward(self, x):
@@ -358,9 +350,7 @@ class Transformer(nn.Module):
         self.params = params
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
-        self.tok_embeddings = nn.Embedding(
-            params.vocab_size, params.dim, init_method=lambda x: x
-        )
+        self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim)
 
         self.criterion = torch.nn.CrossEntropyLoss(ignore_index=0)
 
@@ -371,7 +361,7 @@ class Transformer(nn.Module):
 
         self.norm = RMSNorm(params.dim, eps=params.norm_eps)
         self.output = nn.Linear(
-            params.dim, params.vocab_size, bias=False, init_method=lambda x: x
+            params.dim, params.vocab_size, bias=False
         )
 
         self.freqs_cis = precompute_freqs_cis(

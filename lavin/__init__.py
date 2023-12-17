@@ -3,3 +3,4 @@
 
 from .generator import LaVIN_Generator
 from .model import LightningTransformer
+from .tokenizer import Tokenizer

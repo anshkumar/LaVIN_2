@@ -1,0 +1,37 @@
+fit:
+  trainer:
+    accelerator: gpu
+    devices: 1
+    num_nodes: 1
+    max_epochs: 20
+    accumulate_grad_batches: 32
+    plugins: 
+      - class_path: lightning.pytorch.plugins.precision.BitsandbytesPrecision
+        init_args:
+          mode: 'nf4'
+  model:
+    class_path: lavin.LightningTransformer
+    init_args:
+      llama_model_path: ./data/weights/
+      llm_model: 7B
+      max_seq_len: 512
+      max_batch_size: 1
+      adapter_dim: 16
+      gradient_checkpointing: true
+      learning_rate: 0.001125 # base_lr(0.009) * max_batch_size * accumulate_grad_batches * num_nodes * devices / 256
+      weight_decay: 0.02
+  data:
+    class_path: util.datasets.ScienceQADataModule
+    init_args:
+      problems_path: ./data/problems.json
+      pid_splits_path: ./data/pid_splits.json
+      captions_path: ./data/captions.json
+      images_path: ./data/images/
+      tokenizer_path: ./data/weights/tokenizer.model
+      max_words: 512
+      image_height: 336
+      image_width: 336
+      train_batch_size: 1
+      val_batch_size: 32
+      prompt_format: QCM-ALE
+      use_caption: false
