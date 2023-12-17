@@ -6,7 +6,7 @@ fit:
     max_epochs: 20
     accumulate_grad_batches: 32
     plugins: 
-      - class_path: lightning.pytorch.plugins.precision.BitsandbytesPrecision
+      - class_path: lightning.pytorch.plugins.BitsandbytesPrecision
         init_args:
           mode: 'nf4'
   model:

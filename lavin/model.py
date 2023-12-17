@@ -513,8 +513,7 @@ class LightningTransformer(L.LightningModule):
                     trainable_names.append(name)
                 else:
                     param.requires_grad = False
-        self.log(trainable_names)
-        self.log('Number of trainable params: %.2fM' % (total / 1e6))
+        print('Number of trainable params: %.2fM' % (total / 1e6))
 
     def forward(self, batch):
         return self.llama(*batch)
