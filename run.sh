@@ -1,1 +1,1 @@
-python main.py --config scripts/config_train.yml fit
+python main.py --config configs/config_train.yml fit
