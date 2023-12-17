@@ -1,0 +1,11 @@
+torch
+lightning>=2.1.2
+lightning[pytorch-extra]
+timm
+sentencepiece
+fvcore
+ftfy
+fire
+transformers
+tensorboard
+gradio
