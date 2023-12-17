@@ -6,7 +6,7 @@ CUDA_VISIBLE_DEVICES=1 torchrun --nproc_per_node 1 --nnodes 1 --node_rank 0 --ma
     --caption_file ../data/captions.json \
     --adapter_path ./LaVIN-7B/checkpoint-19.pth \
     --adapter_type attn \
-    --adapter_dim 8 \
+    --adapter_dim 16 \
     --adapter_scale 1 \
     --prompt_format QCM-ALE \
     --max_batch_size 32\
@@ -15,5 +15,4 @@ CUDA_VISIBLE_DEVICES=1 torchrun --nproc_per_node 1 --nnodes 1 --node_rank 0 --ma
     --n_prompt 6 \
     --temperature 10.\
     --visual_adapter_type router\
-    --bits 4bit \
-    --cpu_load
+    --bits 4bit

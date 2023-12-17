@@ -53,11 +53,11 @@ class RepAdapter_Router(nn.Module):
             self,
             in_features=768,
             hidden_dim=8,
-            groups=2,
+            groups=1,
     ):
         super().__init__()
-        self.conv_A = nn.Conv1d(in_features,hidden_dim, 1, groups=1, bias=True) # Down-scale conv
-        self.conv_B = nn.Conv1d(hidden_dim, in_features, 1, groups=groups, bias=True) # Up-scale conv 1
+        self.conv_A = nn.Linear(in_features,hidden_dim, bias=True) # Down-scale conv
+        self.conv_B = nn.Linear(hidden_dim, in_features, bias=True) # Up-scale conv 1
         self.groups = groups
 
         nn.init.xavier_uniform_(self.conv_A.weight)
@@ -77,13 +77,13 @@ class RepAdapter_Router(nn.Module):
             torch.Tensor: Output tensor after applying dynamic modality adaptation and routing.
         """
         with autocast():            
-            if batch_transpose:
-                x = x.transpose(0, 1)
-            x = x.transpose(1,2)
+            # if batch_transpose:
+            #     x = x.transpose(0, 1)
+            # x = x.transpose(1,2)
             x = self.conv_B(self.conv_A(x)) + x
-            x = x.transpose(1,2).contiguous()
-            if batch_transpose:
-                x = x.transpose(0, 1).contiguous()
+            # x = x.transpose(1,2).contiguous()
+            # if batch_transpose:
+            #     x = x.transpose(0, 1).contiguous()
         return x
 
 def forward_llama_attn(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor], adapter=None):
