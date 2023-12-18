@@ -345,12 +345,17 @@ class AdapterMLP(nn.Module):
         return x
 
 class Transformer(nn.Module):
-    def __init__(self, params: ModelArgs):
+    def __init__(self, 
+                 params: ModelArgs,
+                 prefix_img: torch.Tensor, 
+                 prefix_nonimg: torch.Tensor):
         super().__init__()
         self.params = params
         self.vocab_size = params.vocab_size
         self.n_layers = params.n_layers
         self.tok_embeddings = nn.Embedding(params.vocab_size, params.dim)
+        self.prefix_img = prefix_img
+        self.prefix_nonimg = prefix_nonimg
 
         self.criterion = torch.nn.CrossEntropyLoss(ignore_index=0)
 
@@ -369,8 +374,7 @@ class Transformer(nn.Module):
         )
 
         ########################################################
-        _, _, self.backbone = model_zoo.load_model("diht_vitl14_336px", is_train=False)
-        self.backbone = self.backbone.to(torch.device("cuda"))
+        _, _, self.visual_backbone = model_zoo.load_model("diht_vitl14_336px", is_train=False)
         self.adapter_proj = AdapterMLP(1024, params.hidden_proj, params.dim) # (512, 128, 4096)
         self.adapter_modality_embedding=nn.Embedding(2, params.dim)
 
@@ -420,58 +424,57 @@ class Transformer(nn.Module):
             new_labels = torch.cat(new_labels, 0)
         return new_examples, new_labels
 
-    def forward(self, examples, labels=None, images = None, prefix_img = None, prefix_nonimg = None, img_indicators = None, start_pos = 0):
-        with autocast():
-            image_embeds = self.backbone.encode_image(images) # [batch_size, num_feature, feature_dim]: [32, 6, 1024]
+    def forward(self, examples, labels=None, example_mask=None, images=None, img_indicators=None, start_pos = 0):
+        image_embeds = self.visual_backbone.encode_image(images.float()) # [batch_size, num_feature, feature_dim]: [32, 6, 1024]
 
-            if isinstance(img_indicators,list):
-                img_indicators = torch.Tensor(img_indicators).to(image_embeds.device).long() # [1]
-            modality_embed = self.adapter_modality_embedding(img_indicators.unsqueeze(1)) # [1, 1, 4096]
+        if isinstance(img_indicators,list):
+            img_indicators = torch.Tensor(img_indicators).to(image_embeds.device).long() # [1]
+        modality_embed = self.adapter_modality_embedding(img_indicators.unsqueeze(1)) # [1, 1, 4096]
 
-            image_embeds = self.adapter_proj(image_embeds) # [batch_size, num_feature, feature_dim]: [1, 6, 4096]
+        image_embeds = self.adapter_proj(image_embeds) # [batch_size, num_feature, feature_dim]: [1, 6, 4096]
 
-            _bsz, seqlen = examples.shape # [1, 128] (batch size, sequence length)
+        _bsz, seqlen = examples.shape # [1, 128] (batch size, sequence length)
+    
+        examples = self.tok_embeddings(examples) # [1, 128, 4096] (batch size, sequence length, embedding dim)
+        prefix_img = self.tok_embeddings(self.prefix_img.to(image_embeds.device).unsqueeze(0)).squeeze(0) # [3, 4096]
+        prefix_nonimg = self.tok_embeddings(self.prefix_nonimg.to(image_embeds.device).unsqueeze(0)).squeeze(0) # [5, 4096]
+
+        examples, labels = self.insert_image_embeds(examples, labels, image_embeds, prefix_img, prefix_nonimg, img_indicators)
+
+        examples = torch.cat([modality_embed, examples], 1)[:,:seqlen]
+        if self.training:
+            modality_labels = torch.zeros(_bsz, 1).to(labels.device).type_as(labels)
+            labels = torch.cat([modality_labels, labels], 1)[:,:seqlen]
         
-            examples = self.tok_embeddings(examples) # [1, 128, 4096] (batch size, sequence length, embedding dim)
-            prefix_img = self.tok_embeddings(prefix_img.unsqueeze(0)).squeeze(0) # [3, 4096]
-            prefix_nonimg = self.tok_embeddings(prefix_nonimg.unsqueeze(0)).squeeze(0) # [5, 4096]
+        freqs_cis = self.freqs_cis.to(examples.device)
+        freqs_cis = freqs_cis[start_pos : start_pos + seqlen]
+        mask = None
+        if seqlen > 1:
+            mask = torch.full((1, 1, seqlen, seqlen), float("-inf"), device=examples.device)
+            mask = torch.triu(mask, diagonal=0 + 1).type_as(examples)
+            # mask decision token
+            mask[:,:,1:,0] = float("-inf")
 
-            examples, labels = self.insert_image_embeds(examples, labels, image_embeds, prefix_img, prefix_nonimg, img_indicators)
+        for layer in self.layers:
+            examples = layer(examples, start_pos, freqs_cis, mask)
 
-            examples = torch.cat([modality_embed, examples], 1)[:,:seqlen]
-            if self.training:
-                modality_labels = torch.zeros(_bsz, 1).to(labels.device).type_as(labels)
-                labels = torch.cat([modality_labels, labels], 1)[:,:seqlen]
-            
-            freqs_cis = self.freqs_cis.to(examples.device)
-            freqs_cis = freqs_cis[start_pos : start_pos + seqlen]
-            mask = None
-            if seqlen > 1:
-                mask = torch.full((1, 1, seqlen, seqlen), float("-inf"), device=h.device)
-                mask = torch.triu(mask, diagonal=0 + 1).type_as(h)
-                # mask decision token
-                mask[:,:,1:,0] = float("-inf")
+        examples = self.norm(examples)
+        output = self.output(examples)
+        if self.training:
+            output = output[:, :-1, :]
+            output = output.reshape(-1, self.vocab_size)
+            labels = labels[:, 1:].flatten()
 
-            for layer in self.layers:
-                h = layer(h, start_pos, freqs_cis, mask)
-
-            h = self.norm(h)
-            output = self.output(h)
-            if self.training:
-                output = output[:, :-1, :]
-                output = output.reshape(-1, self.vocab_size)
-                labels = labels[:, 1:].flatten()
-
-                c_loss = self.criterion(output, labels)
-                return c_loss
-            else:
-                output = self.output(h[:, -1, :])  # only compute last logits
-                return output
+            c_loss = self.criterion(output, labels)
+            return c_loss
+        else:
+            output = self.output(examples[:, -1, :])  # only compute last logits
+            return output
 
 
 class LightningTransformer(L.LightningModule):
     def __init__(self, 
-                 llama_model_path: str = '../data/weights/',
+                 llama_model_path: str = './data/weights/',
                  llm_model: str = '7B',
                  max_seq_len: int = 512,
                  max_batch_size: int = 1,
@@ -489,17 +492,17 @@ class LightningTransformer(L.LightningModule):
         )
 
         model_args.vocab_size = tokenizer.n_words
-        self.llama = Transformer(model_args)
-        self.prefix_img = torch.tensor(tokenizer.encode("Image: ", bos=False, eos=False), dtype=torch.int64)
-        self.prefix_nonimg = torch.tensor(tokenizer.encode("Image: N/A", bos=False, eos=False), dtype=torch.int64)
+        prefix_img = torch.tensor(tokenizer.encode("Image: ", bos=False, eos=False), dtype=torch.int64)
+        prefix_nonimg = torch.tensor(tokenizer.encode("Image: N/A", bos=False, eos=False), dtype=torch.int64)
+        self.llama = Transformer(model_args, prefix_img, prefix_nonimg)
 
         #delete language encoder
-        del self.llama.backbone.transformer
+        del self.llama.visual_backbone.transformer
 
         self.llama.load_state_dict(checkpoint, strict=False)
 
         set_MMAdapter(self.llama, dim=adapter_dim, gradient_checkpointing=gradient_checkpointing)
-        set_Clip_Adapter(self.llama.backbone.visual, dim=adapter_dim)
+        set_Clip_Adapter(self.llama.visual_backbone.visual, dim=adapter_dim)
 
         learnable_keys = ['adapter']
         total = 0.
@@ -513,6 +516,7 @@ class LightningTransformer(L.LightningModule):
                     trainable_names.append(name)
                 else:
                     param.requires_grad = False
+                    # param.data = param.data.to(torch.bfloat16)
         print('Number of trainable params: %.2fM' % (total / 1e6))
 
     def forward(self, batch):
@@ -524,9 +528,9 @@ class LightningTransformer(L.LightningModule):
 
     def configure_optimizers(self):
         # following timm: set wd as 0 for bias and norm layers
-        param_groups = optim_factory.param_groups_weight_decay(self.llama.parameters(), self.hparams.weight_decay)
+        param_groups = optim_factory.param_groups_weight_decay(self.llama, self.hparams.weight_decay)
 
-        optimizer = bnb.optim.Adam8bit(param_groups, lr=self.hparams.learning_rate, betas=(0.9, 0.995))
+        optimizer = bnb.optim.AdamW32bit(param_groups, lr=self.hparams.learning_rate, betas=(0.9, 0.95), is_paged=True)
 
         # (optional) force embedding layers to use 32 bit for numerical stability
         # https://github.com/huggingface/transformers/issues/14819#issuecomment-1003445038

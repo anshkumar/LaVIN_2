@@ -9,6 +9,10 @@ fit:
       - class_path: lightning.pytorch.plugins.BitsandbytesPrecision
         init_args:
           mode: 'nf4'
+          ignore_modules: 
+            - 'llama.visual_backbone'
+            - 'conv_A'
+            - 'conv_B'
   model:
     class_path: lavin.LightningTransformer
     init_args:

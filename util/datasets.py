@@ -147,8 +147,8 @@ class ScienceQADataSet(Data.Dataset):
         label_mask = labels.ge(0)
         example[~example_mask] = 0
         labels[~label_mask] = 0
-        example_mask = example_mask.float()
-        label_mask = label_mask.float()
+        example_mask = example_mask
+        label_mask = label_mask
         return example, labels, example_mask,label_mask
 
     def __getitem__(self, idx):
@@ -171,7 +171,7 @@ class ScienceQADataSet(Data.Dataset):
             image = self.transforms(image)
             indicator=1
         else:
-            image=torch.Tensor(torch.zeros(3, self.image_height, self.image_width).float())
+            image=torch.Tensor(torch.zeros(3, self.image_height, self.image_width))
             indicator=0
 
         example, labels, example_mask, _=self.tokenize(prompt_question,prompt_answer)
@@ -219,8 +219,8 @@ class InstrcutDataSet(Data.Dataset):
         label_mask = labels.ge(0)
         example[~example_mask] = 0
         labels[~label_mask] = 0
-        example_mask = example_mask.float()
-        label_mask = label_mask.float()
+        example_mask = example_mask
+        label_mask = label_mask
         return example, labels, example_mask,label_mask
 
 
@@ -238,7 +238,7 @@ class InstrcutDataSet(Data.Dataset):
             image = self.transforms(image)
             indicator=1
         else:
-            image=torch.Tensor(torch.zeros(3,224,224).float())
+            image=torch.Tensor(torch.zeros(3,224,224))
             indicator=0
 
         # print(prompt_question,prompt_answer)
