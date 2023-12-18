@@ -1,10 +1,11 @@
 fit:
   trainer:
     accelerator: gpu
-    devices: 1
+    strategy: 'ddp_find_unused_parameters_true'
+    devices: 2
     num_nodes: 1
     max_epochs: 20
-    accumulate_grad_batches: 32
+    accumulate_grad_batches: 8
     plugins: 
       - class_path: lightning.pytorch.plugins.BitsandbytesPrecision
         init_args:
@@ -19,10 +20,10 @@ fit:
       llama_model_path: ./data/weights/
       llm_model: 7B
       max_seq_len: 512
-      max_batch_size: 1
+      val_batch_size: 32
       adapter_dim: 16
       gradient_checkpointing: true
-      learning_rate: 0.001125 # base_lr(0.009) * max_batch_size * accumulate_grad_batches * num_nodes * devices / 256
+      learning_rate: 0.00225 #0.001125 # base_lr(0.009) * train_batch_size * accumulate_grad_batches * num_nodes * devices / 256
       weight_decay: 0.02
   data:
     class_path: util.datasets.ScienceQADataModule
@@ -35,7 +36,7 @@ fit:
       max_words: 512
       image_height: 336
       image_width: 336
-      train_batch_size: 1
+      train_batch_size: 4
       val_batch_size: 32
       prompt_format: QCM-ALE
       use_caption: false

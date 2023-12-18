@@ -31,7 +31,7 @@ class ModelArgs:
     norm_eps: float = 1e-5
     hidden_proj: int=128
 
-    max_batch_size: int = 32
+    val_batch_size: int = 32
     max_seq_len: int = 2048
     drop_path: float=0.
 
@@ -212,24 +212,25 @@ class Attention(nn.Module):
             bias=False,
         )
 
-        self.cache_k = torch.zeros(
-            (
-                args.max_batch_size,
-                args.max_seq_len,
-                self.n_local_kv_heads,
-                self.head_dim,
-            )
-        ).cuda()
-        self.cache_v = torch.zeros(
-            (
-                args.max_batch_size,
-                args.max_seq_len,
-                self.n_local_kv_heads,
-                self.head_dim,
-            )
-        ).cuda()
-        self.gate = torch.nn.Parameter(torch.zeros(1, self.n_local_heads, 1, 1))
-
+        if not self.training:
+            self.cache_k = torch.zeros(
+                (
+                    args.val_batch_size,
+                    args.max_seq_len,
+                    self.n_local_kv_heads,
+                    self.head_dim,
+                )
+            ).cuda()
+            self.cache_v = torch.zeros(
+                (
+                    args.val_batch_size,
+                    args.max_seq_len,
+                    self.n_local_kv_heads,
+                    self.head_dim,
+                )
+            ).cuda()
+            self.gate = torch.nn.Parameter(torch.zeros(1, self.n_local_heads, 1, 1))
+        
     def forward(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor], adapter=None):
 
         bsz, seqlen, _ = x.shape
@@ -425,6 +426,7 @@ class Transformer(nn.Module):
         return new_examples, new_labels
 
     def forward(self, examples, labels=None, example_mask=None, images=None, img_indicators=None, start_pos = 0):
+        # visual_backbone is frozen with floating point weights, so convert image into float first.
         image_embeds = self.visual_backbone.encode_image(images.float()) # [batch_size, num_feature, feature_dim]: [32, 6, 1024]
 
         if isinstance(img_indicators,list):
@@ -477,7 +479,7 @@ class LightningTransformer(L.LightningModule):
                  llama_model_path: str = './data/weights/',
                  llm_model: str = '7B',
                  max_seq_len: int = 512,
-                 max_batch_size: int = 1,
+                 val_batch_size: int = 32,
                  adapter_dim: int = 16,
                  gradient_checkpointing: bool = True,
                  learning_rate: float = 0.009,
@@ -488,7 +490,7 @@ class LightningTransformer(L.LightningModule):
         
         checkpoint, tokenizer, params = _load_and_redistribute_checkpoint(llama_model_path, llm_model)
         model_args: ModelArgs = ModelArgs(
-            max_seq_len = max_seq_len, max_batch_size = max_batch_size, **params
+            max_seq_len = max_seq_len, val_batch_size = val_batch_size, **params
         )
 
         model_args.vocab_size = tokenizer.n_words
@@ -511,19 +513,17 @@ class LightningTransformer(L.LightningModule):
             for key in learnable_keys:
                 if key in name:
                     param.requires_grad = True
-                    param.data = param.data.float()
                     total += param.nelement()
                     trainable_names.append(name)
                 else:
                     param.requires_grad = False
-                    # param.data = param.data.to(torch.bfloat16)
-        print('Number of trainable params: %.2fM' % (total / 1e6))
 
     def forward(self, batch):
         return self.llama(*batch)
 
     def training_step(self, batch, batch_idx):
         loss = self.llama(*batch)
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
 
     def configure_optimizers(self):
