@@ -35,6 +35,16 @@ class ModelArgs:
     max_seq_len: int = 2048
     drop_path: float=0.
 
+def sample_top_p(probs, p):
+    probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
+    probs_sum = torch.cumsum(probs_sort, dim=-1)
+    mask = probs_sum - probs_sort > p
+    probs_sort[mask] = 0.0
+    probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
+    next_token = torch.multinomial(probs_sort, num_samples=1)
+    next_token = torch.gather(probs_idx, -1, next_token)
+    return next_token
+
 def _load_and_redistribute_checkpoint(llama_model_path, model_name):
     with open(Path(llama_model_path) / model_name / 'params.json') as f:
         params = json.load(f)
@@ -360,7 +370,6 @@ class Transformer(nn.Module):
 
         self.criterion = torch.nn.CrossEntropyLoss(ignore_index=0)
 
-        # with init_empty_weights():
         self.layers = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
             self.layers.append(TransformerBlock(layer_id, params))
@@ -374,7 +383,6 @@ class Transformer(nn.Module):
             self.params.dim // self.params.n_heads, self.params.max_seq_len * 2
         )
 
-        ########################################################
         _, _, self.visual_backbone = model_zoo.load_model("diht_vitl14_336px", is_train=False)
         self.adapter_proj = AdapterMLP(1024, params.hidden_proj, params.dim) # (512, 128, 4096)
         self.adapter_modality_embedding=nn.Embedding(2, params.dim)

@@ -254,6 +254,7 @@ class InstrcutDataSet(Data.Dataset):
 
 class ScienceQADataModule(L.LightningDataModule):
     def __init__(self, 
+                 num_workers: int = 8,
                  problems_path: str = "./data/problems.json",
                  pid_splits_path: str = './data/pid_splits.json', 
                  captions_path: str = './data/captions.json', 
@@ -304,10 +305,10 @@ class ScienceQADataModule(L.LightningDataModule):
                 )
 
     def train_dataloader(self):
-        return Data.DataLoader(self.dataset_train, batch_size=self.hparams.train_batch_size)
+        return Data.DataLoader(self.dataset_train, batch_size=self.hparams.train_batch_size, num_workers=self.hparams.num_workers, pin_memory=True)
 
     def val_dataloader(self):
-        return Data.DataLoader(self.dataset_val, batch_size=self.hparams.val_batch_size)
+        return Data.DataLoader(self.dataset_val, batch_size=self.hparams.val_batch_size, num_workers=self.hparams.num_workers, pin_memory=True)
 
 if __name__ == '__main__':
     dataset = ScienceQADataModule()
