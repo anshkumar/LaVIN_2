@@ -11,9 +11,16 @@ fit:
         init_args:
           mode: 'nf4'
           ignore_modules: 
-            - 'llama.visual_backbone'
+            - 'visual_backbone'
             - 'conv_A'
             - 'conv_B'
+    callbacks:
+      - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+        init_args:
+          dirpath: "ckpt"
+          save_on_train_epoch_end: true
+
+  # ckpt_path: '/home/sort/ved/LaVIN_2/lightning_logs/version_0/checkpoints/epoch=13-step=2786.ckpt'
   model:
     class_path: lavin.LightningTransformer
     init_args:
