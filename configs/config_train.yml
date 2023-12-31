@@ -5,7 +5,7 @@ fit:
     devices: 2
     num_nodes: 1
     max_epochs: 20
-    accumulate_grad_batches: 8
+    accumulate_grad_batches: 16
     plugins: 
       - class_path: lightning.pytorch.plugins.BitsandbytesPrecision
         init_args:
@@ -29,9 +29,11 @@ fit:
       max_seq_len: 512
       val_batch_size: 32
       adapter_dim: 16
-      gradient_checkpointing: true
+      gradient_checkpointing: false
       learning_rate: 0.00225 #0.001125 # base_lr(0.009) * train_batch_size * accumulate_grad_batches * num_nodes * devices / 256
       weight_decay: 0.02
+      problems_path: ./data/problems.json
+      
   data:
     class_path: util.datasets.ScienceQADataModule
     init_args:
@@ -44,7 +46,7 @@ fit:
       max_words: 512
       image_height: 336
       image_width: 336
-      train_batch_size: 4
+      train_batch_size: 2
       val_batch_size: 32
       prompt_format: QCM-ALE
       use_caption: false

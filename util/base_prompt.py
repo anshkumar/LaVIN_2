@@ -12,8 +12,8 @@ def get_context_text(problem, use_caption):
     return context
 
 
-def get_choice_text(probelm, options):
-    choices = probelm['choices']
+def get_choice_text(problem, options):
+    choices = problem['choices']
     choice_list = []
     for i, c in enumerate(choices):
         choice_list.append("({}) {}".format(options[i], c))

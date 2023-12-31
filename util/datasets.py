@@ -66,91 +66,6 @@ class ScienceQADataSet(Data.Dataset):
             transforms.ToTensor(), 
             transforms.Normalize(IMAGENET_DEFAULT_MEAN, IMAGENET_DEFAULT_STD)])
 
-    def tokenize(self, prompt, answer):
-        r"""Tokenizes a prompt and an answer, and prepares them for model input.
-        
-        Args:
-            prompt (str): The prompt text.
-                Example:
-                    'Context: N/A
-                    Question: Which of these states is farthest north?
-                    Options: (A) West Virginia (B) Louisiana (C) Arizona (D) Oklahoma
-                    Response:'
-            answer (str): The answer text.
-                Example:
-                    'The answer is A.'
-
-        Returns:
-            example (torch.Tensor): Tokenized and padded (with zero) input combining prompt and answer.
-                Example:
-                    tensor([    1, 15228, 29901,   405, 29914, 29909,    13, 16492, 29901,  8449,
-                                310,  1438,  5922,   338,  2215,   386,   342,  6641, 29973,    13,
-                                5856, 29901,   313, 29909, 29897,  3122, 11653,   313, 29933, 29897,
-                                28838,   313, 29907, 29897, 23716,   313, 29928, 29897, 27879,    13,
-                                5103, 29901,  1576,  1234,   338,   319, 29889,     2,     0,     0,
-                                    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                    0,     0,     0,     0,     0,     0,     0,     0])
-            labels (torch.Tensor): Tokenized labels with masked prompt in the beginning and padding at the end.
-                Example:
-                    tensor([    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                0,     0,  1576,  1234,   338,   319, 29889,     2,     0,     0,
-                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
-                                0,     0,     0,     0,     0,     0,     0,     0])
-            example_mask (torch.Tensor): Mask indicating valid tokens in the example.
-                Example:
-                    tensor([1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
-                            1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
-                            1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 0., 0., 0., 0., 0., 0.,
-                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-                            0., 0.])
-            label_mask (torch.Tensor): Mask indicating valid tokens in the labels.
-                Example:
-                    tensor([0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-                            0., 0., 0., 0., 0., 0., 1., 1., 1., 1., 1., 1., 0., 0., 0., 0., 0., 0.,
-                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
-                            0., 0.])
-        """
-        example=prompt+answer
-
-        prompt=torch.tensor(self.tokenizer.encode(prompt, bos=True, eos=False), dtype=torch.int64)
-        example = torch.tensor(self.tokenizer.encode(example, bos=True, eos=True), dtype=torch.int64)
-        padding = self.max_words - example.shape[0]
-        if padding > 0:
-            example = torch.cat((example, torch.zeros(padding, dtype=torch.int64) - 1))
-        elif padding < 0:
-            example = example[:self.max_words]
-        labels = copy.deepcopy(example)
-        labels[:len(prompt)] = -1 # Masking question with -1
-        example_mask = example.ge(0)
-        label_mask = labels.ge(0)
-        example[~example_mask] = 0
-        labels[~label_mask] = 0
-        example_mask = example_mask
-        label_mask = label_mask
-        return example, labels, example_mask,label_mask
-
     def __getitem__(self, idx):
         r"""Retrieve an item from the dataset at the specified index.
 
@@ -164,7 +79,7 @@ class ScienceQADataSet(Data.Dataset):
             image (torch.Tensor): Processed image data if available, else a tensor of zeros.
             indicator (int): An indicator value (1 or 0) representing image availability.
         """
-        prompt_question,prompt_answer= build_prompt(self.problems, self.qids[idx], self.prompt_format, self.use_caption, self.options)
+        prompt_question, prompt_answer = build_prompt(self.problems, self.qids[idx], self.prompt_format, self.use_caption, self.options)
 
         if self.problems[self.qids[idx]]['image'] is not None:
             image = Image.open(os.path.join(self.image_path, self.qids[idx], 'image.png')).convert('RGB')
@@ -174,9 +89,7 @@ class ScienceQADataSet(Data.Dataset):
             image=torch.Tensor(torch.zeros(3, self.image_height, self.image_width))
             indicator=0
 
-        example, labels, example_mask, _=self.tokenize(prompt_question,prompt_answer)
-
-        return example, labels, example_mask, image, indicator
+        return self.qids[idx], prompt_question, prompt_answer, image, indicator
 
     def __len__(self):
         return len(self.qids)

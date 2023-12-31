@@ -18,6 +18,11 @@ import json
 from .tokenizer import Tokenizer
 import bitsandbytes as bnb
 import timm.optim.optim_factory as optim_factory
+import re
+import copy
+import random
+import time
+import pandas as pd
 
 @dataclass
 class ModelArgs:
@@ -423,10 +428,15 @@ class LightningTransformer(L.LightningModule):
                  adapter_dim: int = 16,
                  gradient_checkpointing: bool = True,
                  learning_rate: float = 0.009,
-                 weight_decay: float = 0.02
+                 weight_decay: float = 0.02,
+                 problems_path: str = "./data/problems.json",
+                 options=["A", "B", "C", "D", "E"],
                  ):
         super().__init__()
         self.save_hyperparameters()
+        self.validation_step_predictions = []
+        self.validation_step_answers = []
+        self.validation_step_qids = []
         
         checkpoint, tokenizer, params = _load_and_redistribute_checkpoint(llama_model_path, llm_model)
         model_args: ModelArgs = ModelArgs(
@@ -595,9 +605,207 @@ class LightningTransformer(L.LightningModule):
     
     def forward(self, batch):
         return self.llama(*batch)
+    
+    def validation_step(self, batch, batch_idx):
+        qids, prompts, answers, images, img_indicators = batch
+        pattern = re.compile(r'The answer is ([A-Z]).')
+
+        answers = []
+
+        results = self.generate(
+            prompts, images=images, indicators=img_indicators, max_gen_len=64, temperature=generation_temperature, top_p=top_p,n_feats=n_prompt
+        )
+
+        for qid, result, answer in zip(qids, results, answers):
+            pred = pattern.findall(result)
+            if len(pred) >= 1:
+                pred = pred[0]  # 'A', 'B', ...
+            else:
+                # print(result)
+                pred = "FAILED"
+            self.validation_step_predictions.append(pred)
+            self.validation_step_answers.append(answer)
+            self.validation_step_qids.append(qid)
+            
+    def get_acc_with_contion(self, res_pd, key, values):
+        if isinstance(values, list):
+            total_pd = res_pd[res_pd[key].isin(values)]
+        else:
+            total_pd = res_pd[res_pd[key] == values]
+        correct_pd = total_pd[total_pd['true_false'] == True]
+        acc = "{:.2f}".format(len(correct_pd) / len(total_pd) * 100)
+        return acc
+
+    def get_scores(self, result_file, data_file):
+        # read result file
+        results = json.load(open(result_file))
+        num = len(results)
+        assert num == 4241
+
+        sqa_data = json.load(open(data_file))
+
+        # construct pandas data
+        sqa_pd = pd.DataFrame(sqa_data).T
+        res_pd = sqa_pd[sqa_pd['split'] == 'test']  # test set
+
+        # update data
+        for index, row in res_pd.iterrows():
+
+            res_pd.loc[index, 'no_context'] = True if (not row['hint'] and not row['image']) else False
+            res_pd.loc[index, 'has_text'] = True if row['hint'] else False
+            res_pd.loc[index, 'has_image'] = True if row['image'] else False
+            res_pd.loc[index, 'has_text_image'] = True if (row['hint'] and row['image']) else False
+
+            label = row['answer']
+            pred = int(results[index])
+            res_pd.loc[index, 'pred'] = pred
+            res_pd.loc[index, 'true_false'] = (label == pred)
+
+        # accuracy scores
+        acc_average = len(res_pd[res_pd['true_false'] == True]) / num * 100
+
+        scores = {
+            'acc_natural':
+            self.get_acc_with_contion(res_pd, 'subject', 'natural science'),
+            'acc_social':
+            self.get_acc_with_contion(res_pd, 'subject', 'social science'),
+            'acc_language':
+            self.get_acc_with_contion(res_pd, 'subject', 'language science'),
+            'acc_has_text':
+            self.get_acc_with_contion(res_pd, 'has_text', True),
+            'acc_has_image':
+            self.get_acc_with_contion(res_pd, 'has_image', True),
+            'acc_no_context':
+            self.get_acc_with_contion(res_pd, 'no_context', True),
+            'acc_grade_1_6':
+            self.get_acc_with_contion(res_pd, 'grade', ['grade1', 'grade2', 'grade3', 'grade4', 'grade5', 'grade6']),
+            'acc_grade_7_12':
+            self.get_acc_with_contion(res_pd, 'grade', ['grade7', 'grade8', 'grade9', 'grade10', 'grade11', 'grade12']),
+            'acc_average':
+            "{:.2f}".format(acc_average),
+        }
+
+        return scores
+        
+    def on_validation_epoch_end(self):
+        def get_pred_idx(prediction, options):
+            """
+            Get the index (e.g. 2) from the prediction (e.g. 'C')
+            """
+            if prediction in options:
+                return options.index(prediction)
+            else:
+                return random.choice(range(len(options)))
+
+        results={}
+        correct=0
+        for i, prediction in zip(self.validation_step_qids, self.validation_step_predictions):
+            pred_idx = get_pred_idx(prediction, self.hparams.options)  # 0, 1, ..., 4
+            if pred_idx == self.validation_step_answers[i]:
+                correct += 1
+            results[i] = pred_idx
+        acc = correct / len(results) * 100
+        print('overall accuracy: ', acc)
+        
+        with open('./preds.json', 'w') as f:
+            json.dump(results,f)
+
+        scores = self.get_scores('./preds.json', self.hparams.problems_path)
+        print(scores)
+        
+        with open(str(time.time())+'.txt','w') as f:
+            f.write(str(scores))
+        
+        self.validation_step_predictions.clear()
+        self.validation_step_answers.clear()
+        self.validation_step_qids.clear()
+
+    def tokenize(self, prompt, answer):
+        r"""Tokenizes a prompt and an answer, and prepares them for model input.
+        
+        Args:
+            prompt (str): The prompt text.
+                Example:
+                    'Context: N/A
+                    Question: Which of these states is farthest north?
+                    Options: (A) West Virginia (B) Louisiana (C) Arizona (D) Oklahoma
+                    Response:'
+            answer (str): The answer text.
+                Example:
+                    'The answer is A.'
+
+        Returns:
+            example (torch.Tensor): Tokenized and padded (with zero) input combining prompt and answer.
+                Example:
+                    tensor([    1, 15228, 29901,   405, 29914, 29909,    13, 16492, 29901,  8449,
+                                310,  1438,  5922,   338,  2215,   386,   342,  6641, 29973,    13,
+                                5856, 29901,   313, 29909, 29897,  3122, 11653,   313, 29933, 29897,
+                                28838,   313, 29907, 29897, 23716,   313, 29928, 29897, 27879,    13,
+                                5103, 29901,  1576,  1234,   338,   319, 29889,     2,     0,     0,
+                                    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                    0,     0,     0,     0,     0,     0,     0,     0])
+            labels (torch.Tensor): Tokenized labels with masked prompt in the beginning and padding at the end.
+                Example:
+                    tensor([    0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                0,     0,  1576,  1234,   338,   319, 29889,     2,     0,     0,
+                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+                                0,     0,     0,     0,     0,     0,     0,     0])
+            example_mask (torch.Tensor): Mask indicating valid tokens in the example.
+                Example:
+                    tensor([1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
+                            1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1.,
+                            1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 1., 0., 0., 0., 0., 0., 0.,
+                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                            0., 0.])
+            label_mask (torch.Tensor): Mask indicating valid tokens in the labels.
+                Example:
+                    tensor([0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                            0., 0., 0., 0., 0., 0., 1., 1., 1., 1., 1., 1., 0., 0., 0., 0., 0., 0.,
+                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                            0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
+                            0., 0.])
+        """
+        example = prompt + answer
+
+        prompt = torch.tensor(self.tokenizer.encode(prompt, bos=True, eos=False), dtype=torch.int64)
+        example = torch.tensor(self.tokenizer.encode(example, bos=True, eos=True), dtype=torch.int64)
+        padding = self.hparams.max_seq_len - example.shape[0]
+        if padding > 0:
+            example = torch.cat((example, torch.zeros(padding, dtype=torch.int64) - 1))
+        elif padding < 0:
+            example = example[:self.hparams.max_seq_len]
+        labels = copy.deepcopy(example)
+        labels[:len(prompt)] = -1 # Masking question with -1
+        example_mask = example.ge(0)
+        label_mask = labels.ge(0)
+        example[~example_mask] = 0
+        labels[~label_mask] = 0
+        return example, labels
 
     def training_step(self, batch, batch_idx):
-        examples, labels, example_mask, images, img_indicators = batch
+        _, prompt, answer, images, img_indicators = batch
+        examples, labels = self.tokenize(prompt, answer)
         
         # visual_backbone is frozen with floating point weights, so convert image into float first.
         image_embeds = self.llama.visual_backbone.encode_image(images.float()) # [batch_size, num_feature, feature_dim]: [32, 6, 1024]
