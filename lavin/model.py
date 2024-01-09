@@ -431,6 +431,9 @@ class LightningTransformer(L.LightningModule):
                  weight_decay: float = 0.02,
                  problems_path: str = "./data/problems.json",
                  options=["A", "B", "C", "D", "E"],
+                 generation_temperature: float = 0.1,
+                 top_p: float = 0.75,
+                 n_prompt: int =10
                  ):
         super().__init__()
         self.save_hyperparameters()
@@ -439,6 +442,7 @@ class LightningTransformer(L.LightningModule):
         self.validation_step_qids = []
         
         checkpoint, tokenizer, params = _load_and_redistribute_checkpoint(llama_model_path, llm_model)
+        self.tokenizer = tokenizer
         model_args: ModelArgs = ModelArgs(
             max_seq_len = max_seq_len, val_batch_size = val_batch_size, **params
         )
@@ -533,9 +537,16 @@ class LightningTransformer(L.LightningModule):
         prompt_tokens = []
         for i,x in enumerate(prompts):
             if indicators[i] == 1:
-                token_idx = prefix_img_token + [0]*image_embeds[i].shape[0] + self.tokenizer.encode(x, bos=False, eos=False)
+                token_idx = torch.concat([
+                    prefix_img_token,
+                    torch.Tensor([0]*image_embeds[i].shape[0]).to(image_embeds.device),
+                    torch.Tensor(self.tokenizer.encode(x, bos=False, eos=False)).to(image_embeds.device)
+                    ])
             else:
-                token_idx = non_prefix_img_token + self.tokenizer.encode(x, bos=False, eos=False)
+                token_idx = torch.concat([
+                    non_prefix_img_token,
+                    torch.Tensor(self.tokenizer.encode(x, bos=False, eos=False)).to(image_embeds.device)
+                ])
             prompt_tokens.append(token_idx)
 
 
@@ -613,7 +624,7 @@ class LightningTransformer(L.LightningModule):
         answers = []
 
         results = self.generate(
-            prompts, images=images, indicators=img_indicators, max_gen_len=64, temperature=generation_temperature, top_p=top_p,n_feats=n_prompt
+            prompts, images=images, indicators=img_indicators, max_gen_len=64, temperature=self.hparams.generation_temperature, top_p=self.hparams.top_p,n_feats=self.hparams.n_prompt
         )
 
         for qid, result, answer in zip(qids, results, answers):

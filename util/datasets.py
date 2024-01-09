@@ -202,6 +202,7 @@ class ScienceQADataModule(L.LightningDataModule):
                 use_caption = self.hparams.use_caption,
                 options = self.hparams.options
                 )
+        else:
             self.dataset_val = ScienceQADataSet(
                 problems_path = self.hparams.problems_path, 
                 pid_splits_path = self.hparams.pid_splits_path, 
