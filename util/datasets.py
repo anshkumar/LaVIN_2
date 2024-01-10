@@ -202,7 +202,7 @@ class ScienceQADataModule(L.LightningDataModule):
                 use_caption = self.hparams.use_caption,
                 options = self.hparams.options
                 )
-        else:
+        if stage == "test":
             self.dataset_val = ScienceQADataSet(
                 problems_path = self.hparams.problems_path, 
                 pid_splits_path = self.hparams.pid_splits_path, 
@@ -221,7 +221,7 @@ class ScienceQADataModule(L.LightningDataModule):
     def train_dataloader(self):
         return Data.DataLoader(self.dataset_train, batch_size=self.hparams.train_batch_size, num_workers=self.hparams.num_workers, pin_memory=True)
 
-    def val_dataloader(self):
+    def test_dataloader(self):
         return Data.DataLoader(self.dataset_val, batch_size=self.hparams.val_batch_size, num_workers=self.hparams.num_workers, pin_memory=True)
 
 if __name__ == '__main__':

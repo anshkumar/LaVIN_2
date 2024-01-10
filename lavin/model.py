@@ -617,7 +617,7 @@ class LightningTransformer(L.LightningModule):
     def forward(self, batch):
         return self.llama(*batch)
     
-    def validation_step(self, batch, batch_idx):
+    def test_step(self, batch, batch_idx):
         qids, prompts, answers, images, img_indicators = batch
         pattern = re.compile(r'The answer is ([A-Z]).')
 
@@ -698,7 +698,7 @@ class LightningTransformer(L.LightningModule):
 
         return scores
         
-    def on_validation_epoch_end(self):
+    def on_test_epoch_end(self):
         def get_pred_idx(prediction, options):
             """
             Get the index (e.g. 2) from the prediction (e.g. 'C')
@@ -731,7 +731,7 @@ class LightningTransformer(L.LightningModule):
         self.validation_step_answers.clear()
         self.validation_step_qids.clear()
 
-    def tokenize(self, prompt, answer):
+    def tokenize(self, prompts, answers):
         r"""Tokenizes a prompt and an answer, and prepares them for model input.
         
         Args:
@@ -797,22 +797,25 @@ class LightningTransformer(L.LightningModule):
                             0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0., 0.,
                             0., 0.])
         """
-        example = prompt + answer
-
-        prompt = torch.tensor(self.tokenizer.encode(prompt, bos=True, eos=False), dtype=torch.int64)
-        example = torch.tensor(self.tokenizer.encode(example, bos=True, eos=True), dtype=torch.int64)
-        padding = self.hparams.max_seq_len - example.shape[0]
-        if padding > 0:
-            example = torch.cat((example, torch.zeros(padding, dtype=torch.int64) - 1))
-        elif padding < 0:
-            example = example[:self.hparams.max_seq_len]
-        labels = copy.deepcopy(example)
-        labels[:len(prompt)] = -1 # Masking question with -1
-        example_mask = example.ge(0)
-        label_mask = labels.ge(0)
-        example[~example_mask] = 0
-        labels[~label_mask] = 0
-        return example, labels
+        examples, labels = [], []
+        for prompt, answer in zip(prompts, answers):
+            example = prompt + answer
+            prompt = torch.tensor(self.tokenizer.encode(prompt, bos=True, eos=False), dtype=torch.int64)
+            example = torch.tensor(self.tokenizer.encode(example, bos=True, eos=True), dtype=torch.int64)
+            padding = self.hparams.max_seq_len - example.shape[0]
+            if padding > 0:
+                example = torch.cat((example, torch.zeros(padding, dtype=torch.int64) - 1))
+            elif padding < 0:
+                example = example[:self.hparams.max_seq_len]
+            label = copy.deepcopy(example)
+            label[:len(prompt)] = -1 # Masking question with -1
+            example_mask = example.ge(0)
+            label_mask = label.ge(0)
+            example[~example_mask] = 0
+            label[~label_mask] = 0
+            examples.append(example)
+            labels.append(label)
+        return torch.stack(examples), torch.stack(labels)
 
     def training_step(self, batch, batch_idx):
         _, prompt, answer, images, img_indicators = batch
@@ -820,7 +823,7 @@ class LightningTransformer(L.LightningModule):
         
         # visual_backbone is frozen with floating point weights, so convert image into float first.
         image_embeds = self.llama.visual_backbone.encode_image(images.float()) # [batch_size, num_feature, feature_dim]: [32, 6, 1024]
-
+        examples, labels = examples.to(image_embeds.device), labels.to(image_embeds.device)
         if isinstance(img_indicators,list):
             img_indicators = torch.Tensor(img_indicators).to(image_embeds.device).long() # [1]
         modality_embed = self.llama.adapter_modality_embedding(img_indicators.unsqueeze(1)) # [1, 1, 4096]
