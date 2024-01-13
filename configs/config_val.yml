@@ -1,0 +1,47 @@
+test:
+  trainer:
+    accelerator: gpu
+    devices: 1
+    num_nodes: 1
+    plugins: 
+      - class_path: lightning.pytorch.plugins.BitsandbytesPrecision
+        init_args:
+          mode: 'nf4'
+          ignore_modules: 
+            - 'visual_backbone'
+            - 'conv_A'
+            - 'conv_B'
+    callbacks:
+      - class_path: lightning.pytorch.callbacks.ModelCheckpoint
+        init_args:
+          dirpath: "ckpt"
+
+  ckpt_path: '/home/sort/ved/LaVIN_2/ckpt_saved/epoch=19-step=3980.ckpt'
+  model:
+    class_path: lavin.LightningTransformer
+    init_args:
+      llama_model_path: ./data/weights/
+      llm_model: 7B
+      max_seq_len: 512
+      val_batch_size: 32
+      adapter_dim: 16
+      problems_path: ./data/problems.json
+      generation_temperature: 0.1
+      top_p: 0.75
+      n_prompt: 10
+      
+  data:
+    class_path: util.datasets.ScienceQADataModule
+    init_args:
+      num_workers: 24
+      problems_path: ./data/problems.json
+      pid_splits_path: ./data/pid_splits.json
+      captions_path: ./data/captions.json
+      images_path: ./data/images/
+      tokenizer_path: ./data/weights/tokenizer.model
+      max_words: 512
+      image_height: 336
+      image_width: 336
+      val_batch_size: 32
+      prompt_format: QCM-ALE
+      use_caption: false
