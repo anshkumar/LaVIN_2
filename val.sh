@@ -1,1 +1,1 @@
-python main.py --config configs/config_val.yml validate
+python main.py --config configs/config_val.yml test
