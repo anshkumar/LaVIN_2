@@ -20,7 +20,7 @@ fit:
           dirpath: "ckpt"
           save_on_train_epoch_end: true
 
-  # ckpt_path: '/home/sort/ved/LaVIN_2/ckpt/epoch=0-step=199.ckpt'
+  # ckpt_path: '/home/sort/ved/LaVIN_2/ckpt/lightning_logs/version_0/checkpoints/epoch=0-step=199.ckpt'
   model:
     class_path: lavin.LightningTransformer
     init_args:

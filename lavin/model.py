@@ -23,6 +23,7 @@ import copy
 import random
 import time
 import pandas as pd
+from collections import OrderedDict
 
 @dataclass
 class ModelArgs:
@@ -227,24 +228,23 @@ class Attention(nn.Module):
             bias=False,
         )
 
-        if not self.training:
-            self.cache_k = torch.zeros(
-                (
-                    args.val_batch_size,
-                    args.max_seq_len,
-                    self.n_local_kv_heads,
-                    self.head_dim,
-                )
-            ).cuda()
-            self.cache_v = torch.zeros(
-                (
-                    args.val_batch_size,
-                    args.max_seq_len,
-                    self.n_local_kv_heads,
-                    self.head_dim,
-                )
-            ).cuda()
-            self.gate = torch.nn.Parameter(torch.zeros(1, self.n_local_heads, 1, 1))
+        self.cache_k = torch.zeros(
+            (
+                args.val_batch_size,
+                args.max_seq_len,
+                self.n_local_kv_heads,
+                self.head_dim,
+            )
+        ).cuda()
+        self.cache_v = torch.zeros(
+            (
+                args.val_batch_size,
+                args.max_seq_len,
+                self.n_local_kv_heads,
+                self.head_dim,
+            )
+        ).cuda()
+        self.gate = torch.nn.Parameter(torch.zeros(1, self.n_local_heads, 1, 1))
         
     def forward(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor], adapter=None):
 
@@ -392,7 +392,7 @@ class Transformer(nn.Module):
         self.adapter_proj = AdapterMLP(1024, params.hidden_proj, params.dim) # (512, 128, 4096)
         self.adapter_modality_embedding=nn.Embedding(2, params.dim)
 
-    def forward(self, examples, labels=None, seqlen=0, start_pos = 0):        
+    def forward(self, examples, labels=None, seqlen=0, start_pos = 0):   
         freqs_cis = self.freqs_cis.to(examples.device)
         freqs_cis = freqs_cis[start_pos : start_pos + seqlen]
         mask = None
@@ -581,7 +581,7 @@ class LightningTransformer(L.LightningModule):
                 h = torch.cat([modality_embedding,token_embeds[:,prev_pos:cur_pos]], 1)
             else:
                 h = token_embeds[:,prev_pos:cur_pos]
-            logits = self.llama(h, start_pos = prev_pos)
+            logits = self.llama(h, start_pos = prev_pos, seqlen = h.shape[1])
             if temperature > 0:
                 probs = torch.softmax(logits / temperature, dim=-1)
                 next_token = sample_top_p(probs, top_p)
@@ -846,7 +846,14 @@ class LightningTransformer(L.LightningModule):
         loss = self.llama(examples, labels, seqlen)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         return loss
-
+            
+    def on_save_checkpoint(self, checkpoint):
+        trainable = OrderedDict()
+        for n, p in checkpoint['state_dict'].items():
+            if 'adapter' in n:
+                trainable[n] = p.data
+        checkpoint['state_dict'] = trainable
+        
     def configure_optimizers(self):
         # following timm: set wd as 0 for bias and norm layers
         param_groups = optim_factory.param_groups_weight_decay(self.llama, self.hparams.weight_decay)

@@ -11,12 +11,8 @@ test:
             - 'visual_backbone'
             - 'conv_A'
             - 'conv_B'
-    callbacks:
-      - class_path: lightning.pytorch.callbacks.ModelCheckpoint
-        init_args:
-          dirpath: "ckpt"
 
-  ckpt_path: '/home/sort/ved/LaVIN_2/ckpt_saved/epoch=19-step=3980.ckpt'
+  ckpt_path: '/home/sort/ved/LaVIN_2/ckpt/lightning_logs/version_0/checkpoints/epoch=0-step=199.ckpt'
   model:
     class_path: lavin.LightningTransformer
     init_args:
@@ -25,6 +21,7 @@ test:
       max_seq_len: 512
       val_batch_size: 32
       adapter_dim: 16
+      gradient_checkpointing: false
       problems_path: ./data/problems.json
       generation_temperature: 0.1
       top_p: 0.75
