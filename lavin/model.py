@@ -848,6 +848,9 @@ class LightningTransformer(L.LightningModule):
         return loss
             
     def on_save_checkpoint(self, checkpoint):
+        '''
+        While saving checkpoint only save trainable weights.
+        '''
         trainable = OrderedDict()
         for n, p in checkpoint['state_dict'].items():
             if 'adapter' in n:
