@@ -77,13 +77,13 @@ class RepAdapter_Router(nn.Module):
             torch.Tensor: Output tensor after applying dynamic modality adaptation and routing.
         """
         with autocast():            
-            # if batch_transpose:
-            #     x = x.transpose(0, 1)
-            # x = x.transpose(1,2)
+            if batch_transpose:
+                x = x.transpose(0, 1)
+            x = x.transpose(1,2)
             x = self.conv_B(self.conv_A(x)) + x
-            # x = x.transpose(1,2).contiguous()
-            # if batch_transpose:
-            #     x = x.transpose(0, 1).contiguous()
+            x = x.transpose(1,2).contiguous()
+            if batch_transpose:
+                x = x.transpose(0, 1).contiguous()
         return x
 
 def forward_llama_attn(self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor], adapter=None):
